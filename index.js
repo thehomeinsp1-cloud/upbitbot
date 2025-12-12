@@ -8,6 +8,7 @@ const http = require('http');
 const config = require('./config');
 const { analyzeMarket, getMarketSummary, fetchAllKRWMarkets } = require('./indicators');
 const { sendTelegramMessage, sendTelegramAlert } = require('./telegram');
+const { fetchCoinNews, fetchMarketNews, getSentimentText } = require('./news');
 
 // ============================================
 // HTTP 서버 (Render 무료 티어 유지용)
@@ -67,10 +68,29 @@ const analyzeAndAlert = async (market) => {
     if (!analysis) return null;
 
     const coinName = market.replace('KRW-', '');
-    const scorePercent = parseFloat(analysis.scorePercent);
+    let technicalScore = parseFloat(analysis.scorePercent);
+    
+    // 뉴스 분석 추가 (상위 코인만 - API 제한 고려)
+    let newsData = { score: 0, sentiment: 'neutral', news: [] };
+    
+    // 기술적 점수가 60점 이상인 코인만 뉴스 체크 (API 호출 최적화)
+    if (technicalScore >= 60 && config.USE_NEWS_ANALYSIS) {
+      newsData = await fetchCoinNews(market, 3);
+      await sleep(300); // API 속도 제한
+    }
+    
+    // 최종 점수 계산 (기술적 90% + 뉴스 10%)
+    const newsBonus = newsData.score * config.NEWS_WEIGHT_PERCENT / 10;
+    const finalScore = Math.min(100, Math.max(0, technicalScore + newsBonus));
+    
+    // 결과에 뉴스 정보 추가
+    analysis.newsData = newsData;
+    analysis.technicalScore = technicalScore;
+    analysis.finalScore = finalScore.toFixed(0);
+    analysis.scorePercent = finalScore.toFixed(0); // 최종 점수로 업데이트
 
     // 강력 매수 신호 (설정 점수 이상)
-    if (scorePercent >= config.ALERT_THRESHOLD) {
+    if (finalScore >= config.ALERT_THRESHOLD) {
       const lastAlert = lastAlerts[market];
       const now = Date.now();
       
@@ -80,7 +100,7 @@ const analyzeAndAlert = async (market) => {
         
         const message = formatAlertMessage(analysis);
         await sendTelegramAlert(message);
-        log(`🚨 ${coinName} 강력 매수 신호 발송! (${scorePercent}점)`);
+        log(`🚨 ${coinName} 강력 매수 신호 발송! (최종: ${finalScore.toFixed(0)}점, 기술: ${technicalScore}점, 뉴스: ${newsData.score > 0 ? '+' : ''}${newsData.score})`);
       }
     }
 
@@ -98,18 +118,38 @@ const formatAlertMessage = (analysis) => {
   const changeIcon = analysis.priceChange >= 0 ? '📈' : '📉';
   
   let message = `🚀 *${coinName} 강력 매수 신호!*\n\n`;
-  message += `💰 현재가: ${priceFormatted}원 ${changeIcon} (${analysis.priceChange}%)\n`;
-  message += `📊 종합점수: *${analysis.scorePercent}점*\n`;
-  message += `🎯 추천: ${analysis.recommendation}\n\n`;
+  message += `💰 현재가: ${priceFormatted}원 ${changeIcon} (${analysis.priceChange}%)\n\n`;
   
-  message += `📋 *지표 상세:*\n`;
+  // 점수 표시 (기술적 + 뉴스)
+  message += `📊 *점수 분석:*\n`;
+  message += `• 기술적 점수: ${analysis.technicalScore}점\n`;
+  
+  if (analysis.newsData && analysis.newsData.score !== 0) {
+    const newsSign = analysis.newsData.score > 0 ? '+' : '';
+    const sentimentText = getSentimentText(analysis.newsData.score, analysis.newsData.sentiment);
+    message += `• 뉴스 점수: ${newsSign}${analysis.newsData.score}점 ${sentimentText.emoji}\n`;
+  }
+  
+  message += `• *최종 점수: ${analysis.finalScore}점*\n\n`;
+  
+  message += `📈 *기술적 지표:*\n`;
   message += `• RSI: ${analysis.rsi} ${parseFloat(analysis.rsi) < 30 ? '(과매도🟢)' : ''}\n`;
   message += `• MACD: ${parseFloat(analysis.macd) > 0 ? '상승추세🟢' : '하락추세🔴'}\n`;
   message += `• 볼린저: ${analysis.bbPosition}% 위치\n`;
   message += `• 스토캐스틱: ${analysis.stochK}%\n`;
-  message += `• 거래량: 평균 대비 ${analysis.volumeRatio}배\n\n`;
+  message += `• 거래량: 평균 대비 ${analysis.volumeRatio}배\n`;
   
-  message += `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
+  // 뉴스 정보 추가
+  if (analysis.newsData && analysis.newsData.news && analysis.newsData.news.length > 0) {
+    message += `\n📰 *최근 뉴스:*\n`;
+    analysis.newsData.news.slice(0, 2).forEach(news => {
+      // 제목 길이 제한
+      const title = news.title.length > 40 ? news.title.substring(0, 40) + '...' : news.title;
+      message += `${news.sentiment} ${title}\n`;
+    });
+  }
+  
+  message += `\n⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
   
   return message;
 };
@@ -162,9 +202,26 @@ const sendPeriodicReport = async (results) => {
   
   topCoins.forEach((r, i) => {
     const icon = r.scorePercent >= 75 ? '🟢' : r.scorePercent >= 60 ? '🟡' : '⚪';
-    message += `${i + 1}. ${icon} ${r.market.replace('KRW-', '')}: ${r.scorePercent}점\n`;
+    const newsIcon = r.newsData && r.newsData.score > 0 ? '📰+' : r.newsData && r.newsData.score < 0 ? '📰-' : '';
+    message += `${i + 1}. ${icon} ${r.market.replace('KRW-', '')}: ${r.scorePercent}점 ${newsIcon}\n`;
     message += `   └ ₩${r.currentPrice.toLocaleString()} (${r.priceChange}%)\n`;
   });
+  
+  // 시장 전체 뉴스 추가
+  if (config.USE_NEWS_ANALYSIS) {
+    try {
+      const marketNews = await fetchMarketNews(3);
+      if (marketNews.news && marketNews.news.length > 0) {
+        message += `\n📰 *주요 뉴스:*\n`;
+        marketNews.news.slice(0, 3).forEach(news => {
+          const title = news.title.length > 35 ? news.title.substring(0, 35) + '...' : news.title;
+          message += `${news.sentiment} ${title}\n`;
+        });
+      }
+    } catch (e) {
+      // 뉴스 조회 실패해도 리포트는 발송
+    }
+  }
   
   message += `\n⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
   
@@ -181,11 +238,16 @@ const sendStartupMessage = async () => {
     ? `${watchCoins.slice(0, 10).map(c => c.replace('KRW-', '')).join(', ')} 외 ${watchCoins.length - 10}개`
     : watchCoins.map(c => c.replace('KRW-', '')).join(', ');
     
+  const newsStatus = config.USE_NEWS_ANALYSIS ? '✅ 활성화' : '❌ 비활성화';
+    
   const message = `🤖 *암호화폐 신호 봇 시작!*\n\n` +
     `📌 모니터링 코인: ${watchCoins.length}개\n` +
     `⏱ 분석 주기: ${config.ANALYSIS_INTERVAL / 60000}분\n` +
     `🎯 알림 기준: ${config.ALERT_THRESHOLD}점 이상\n\n` +
-    `🌐 서버: Render.com\n` +
+    `📊 *분석 항목:*\n` +
+    `• 기술적 지표 6종 ✅\n` +
+    `• 전세계 뉴스 감성 ${newsStatus}\n\n` +
+    `🌐 서버: Render.com (24시간)\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
   
   await sendTelegramMessage(message);
