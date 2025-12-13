@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
-  "version": "2.0.0",
-  "description": "암호화폐 통합 매수 신호 알림 봇 - 업비트 API + 기술적 지표 + 텔레그램",
+  "version": "4.0.0",
+  "description": "암호화폐 통합 매수 신호 알림 봇 - 바이낸스 기준 + 멀티타임프레임 + 펀딩비",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,6 +9,7 @@
   "keywords": [
     "crypto",
     "bitcoin",
+    "binance",
     "upbit",
     "trading",
     "signal",
@@ -17,6 +18,9 @@
   ],
   "author": "",
   "license": "MIT",
+  "dependencies": {
+    "technicalindicators": "^3.1.0"
+  },
   "engines": {
     "node": ">=18.0.0"
   }

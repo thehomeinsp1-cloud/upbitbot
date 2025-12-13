@@ -1,12 +1,176 @@
 /**
  * 📈 기술적 지표 계산 모듈
- * 업비트 API 연동 + 지표 분석
+ * 바이낸스 기준 분석 + 업비트 가격 표시
  */
 
 const config = require('./config');
 
 // ============================================
-// 업비트 API 호출
+// 바이낸스 API 호출 (메인 분석용)
+// ============================================
+
+const fetchBinanceAPI = async (endpoint) => {
+  const response = await fetch(`https://api.binance.com/api/v3${endpoint}`, {
+    headers: { 'Accept': 'application/json' }
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Binance API 오류: ${response.status}`);
+  }
+  
+  return response.json();
+};
+
+// 바이낸스 캔들 데이터 조회
+const fetchBinanceCandles = async (symbol, interval = '1h', limit = 100) => {
+  const endpoint = `/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  const data = await fetchBinanceAPI(endpoint);
+  
+  // 바이낸스 캔들 포맷 변환
+  return data.map(c => ({
+    timestamp: c[0],
+    open_price: parseFloat(c[1]),
+    high_price: parseFloat(c[2]),
+    low_price: parseFloat(c[3]),
+    trade_price: parseFloat(c[4]),  // close
+    candle_acc_trade_volume: parseFloat(c[5])
+  }));
+};
+
+// 바이낸스 현재가 조회
+const fetchBinanceTicker = async (symbol) => {
+  const endpoint = `/ticker/price?symbol=${symbol}`;
+  const data = await fetchBinanceAPI(endpoint);
+  return parseFloat(data.price);
+};
+
+// 바이낸스 24시간 변동 조회
+const fetchBinance24h = async (symbol) => {
+  const endpoint = `/ticker/24hr?symbol=${symbol}`;
+  const data = await fetchBinanceAPI(endpoint);
+  return {
+    price: parseFloat(data.lastPrice),
+    priceChange: parseFloat(data.priceChange),
+    priceChangePercent: parseFloat(data.priceChangePercent),
+    volume: parseFloat(data.volume)
+  };
+};
+
+// 바이낸스 전체 USDT 마켓 조회
+const fetchAllBinanceUSDTMarkets = async () => {
+  try {
+    const endpoint = '/exchangeInfo';
+    const data = await fetchBinanceAPI(endpoint);
+    const usdtMarkets = data.symbols
+      .filter(s => s.quoteAsset === 'USDT' && s.status === 'TRADING')
+      .map(s => s.symbol);
+    return usdtMarkets;
+  } catch (error) {
+    console.error('바이낸스 마켓 조회 실패:', error.message);
+    return [];
+  }
+};
+
+// ============================================
+// 바이낸스 선물 API (펀딩비 분석용)
+// ============================================
+
+const fetchBinanceFuturesAPI = async (endpoint) => {
+  try {
+    const response = await fetch(`https://fapi.binance.com/fapi/v1${endpoint}`, {
+      headers: { 'Accept': 'application/json' }
+    });
+    
+    if (!response.ok) return null;
+    return response.json();
+  } catch (error) {
+    return null;
+  }
+};
+
+// 펀딩비 조회 (선물 시장 심리)
+const fetchFundingRate = async (symbol) => {
+  try {
+    const data = await fetchBinanceFuturesAPI(`/fundingRate?symbol=${symbol}&limit=1`);
+    if (data && data.length > 0) {
+      return {
+        fundingRate: parseFloat(data[0].fundingRate) * 100, // 퍼센트로 변환
+        fundingTime: data[0].fundingTime
+      };
+    }
+    return null;
+  } catch (error) {
+    return null;
+  }
+};
+
+// 롱/숏 비율 조회
+const fetchLongShortRatio = async (symbol) => {
+  try {
+    const data = await fetchBinanceFuturesAPI(`/globalLongShortAccountRatio?symbol=${symbol}&period=1h&limit=1`);
+    if (data && data.length > 0) {
+      return {
+        longShortRatio: parseFloat(data[0].longShortRatio),
+        longAccount: parseFloat(data[0].longAccount) * 100,
+        shortAccount: parseFloat(data[0].shortAccount) * 100
+      };
+    }
+    return null;
+  } catch (error) {
+    return null;
+  }
+};
+
+// ============================================
+// 바이낸스 호가창 분석 (수급 분석용)
+// ============================================
+
+const fetchOrderBook = async (symbol, limit = 20) => {
+  try {
+    const endpoint = `/depth?symbol=${symbol}&limit=${limit}`;
+    const data = await fetchBinanceAPI(endpoint);
+    
+    // 매수/매도 총량 계산
+    let totalBids = 0; // 매수 잔량
+    let totalAsks = 0; // 매도 잔량
+    
+    data.bids.forEach(([price, qty]) => {
+      totalBids += parseFloat(price) * parseFloat(qty);
+    });
+    
+    data.asks.forEach(([price, qty]) => {
+      totalAsks += parseFloat(price) * parseFloat(qty);
+    });
+    
+    // 매수/매도 비율 (1 이상이면 매수세 우위)
+    const bidAskRatio = totalBids / totalAsks;
+    
+    // 매수벽/매도벽 분석
+    const biggestBid = data.bids.reduce((max, [price, qty]) => {
+      const value = parseFloat(price) * parseFloat(qty);
+      return value > max.value ? { price: parseFloat(price), value } : max;
+    }, { price: 0, value: 0 });
+    
+    const biggestAsk = data.asks.reduce((max, [price, qty]) => {
+      const value = parseFloat(price) * parseFloat(qty);
+      return value > max.value ? { price: parseFloat(price), value } : max;
+    }, { price: 0, value: 0 });
+    
+    return {
+      bidAskRatio,
+      totalBids,
+      totalAsks,
+      biggestBid,
+      biggestAsk,
+      buyPressure: bidAskRatio > 1.2 ? 'strong' : bidAskRatio > 0.8 ? 'neutral' : 'weak'
+    };
+  } catch (error) {
+    return null;
+  }
+};
+
+// ============================================
+// 업비트 API 호출 (가격 비교용)
 // ============================================
 
 const fetchUpbitAPI = async (endpoint) => {
@@ -15,21 +179,14 @@ const fetchUpbitAPI = async (endpoint) => {
   });
   
   if (!response.ok) {
-    throw new Error(`API 오류: ${response.status}`);
+    throw new Error(`Upbit API 오류: ${response.status}`);
   }
   
   return response.json();
 };
 
-// 캔들 데이터 조회
-const fetchCandles = async (market, count = 100, unit = 60) => {
-  const endpoint = `/candles/minutes/${unit}?market=${market}&count=${count}`;
-  const data = await fetchUpbitAPI(endpoint);
-  return data.reverse(); // 시간순 정렬
-};
-
-// 현재가 조회
-const fetchTicker = async (market) => {
+// 업비트 현재가 조회
+const fetchUpbitTicker = async (market) => {
   const endpoint = `/ticker?markets=${market}`;
   const data = await fetchUpbitAPI(endpoint);
   return data[0];
@@ -40,15 +197,81 @@ const fetchAllKRWMarkets = async () => {
   try {
     const endpoint = '/market/all?isDetails=false';
     const data = await fetchUpbitAPI(endpoint);
-    // KRW 마켓만 필터링
     const krwMarkets = data
       .filter(m => m.market.startsWith('KRW-'))
       .map(m => m.market);
     return krwMarkets;
   } catch (error) {
-    console.error('마켓 목록 조회 실패:', error.message);
+    console.error('업비트 마켓 조회 실패:', error.message);
     return [];
   }
+};
+
+// ============================================
+// 환율 API (김치 프리미엄 계산용)
+// ============================================
+
+let cachedExchangeRate = null;
+let exchangeRateLastFetch = 0;
+const EXCHANGE_RATE_CACHE_TIME = 30 * 60 * 1000; // 30분 캐시
+
+const fetchUSDKRWRate = async () => {
+  const now = Date.now();
+  
+  // 캐시된 환율 사용
+  if (cachedExchangeRate && (now - exchangeRateLastFetch) < EXCHANGE_RATE_CACHE_TIME) {
+    return cachedExchangeRate;
+  }
+  
+  try {
+    const response = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
+    const data = await response.json();
+    cachedExchangeRate = data.rates.KRW;
+    exchangeRateLastFetch = now;
+    return cachedExchangeRate;
+  } catch (error) {
+    console.error('환율 조회 실패:', error.message);
+    return cachedExchangeRate || 1350; // 기본값
+  }
+};
+
+// ============================================
+// 심볼 매핑 (업비트 ↔ 바이낸스)
+// ============================================
+
+const upbitToBinanceSymbol = (upbitMarket) => {
+  // KRW-BTC → BTCUSDT
+  const coin = upbitMarket.replace('KRW-', '');
+  return `${coin}USDT`;
+};
+
+const binanceToUpbitMarket = (binanceSymbol) => {
+  // BTCUSDT → KRW-BTC
+  const coin = binanceSymbol.replace('USDT', '');
+  return `KRW-${coin}`;
+};
+
+// 바이낸스에 있는 코인인지 확인
+let binanceSymbolsCache = null;
+const getBinanceSymbols = async () => {
+  if (!binanceSymbolsCache) {
+    binanceSymbolsCache = await fetchAllBinanceUSDTMarkets();
+  }
+  return binanceSymbolsCache;
+};
+
+// 캔들 데이터 조회 (레거시 호환)
+const fetchCandles = async (market, count = 100, unit = 60) => {
+  const endpoint = `/candles/minutes/${unit}?market=${market}&count=${count}`;
+  const data = await fetchUpbitAPI(endpoint);
+  return data.reverse();
+};
+
+// 현재가 조회 (레거시 호환)
+const fetchTicker = async (market) => {
+  const endpoint = `/ticker?markets=${market}`;
+  const data = await fetchUpbitAPI(endpoint);
+  return data[0];
 };
 
 // ============================================
@@ -114,6 +337,112 @@ const calculateMFI = (highs, lows, closes, volumes, period = 14) => {
   if (negFlow === 0) return 100;
   const moneyFlowRatio = posFlow / negFlow;
   return 100 - (100 / (1 + moneyFlowRatio));
+};
+
+// OBV (On Balance Volume) - 세력 매집 판단 [신규]
+const calculateOBV = (closes, volumes) => {
+  if (closes.length < 2) return null;
+  
+  let obv = 0;
+  const obvHistory = [0];
+  
+  for (let i = 1; i < closes.length; i++) {
+    if (closes[i] > closes[i - 1]) {
+      obv += volumes[i];
+    } else if (closes[i] < closes[i - 1]) {
+      obv -= volumes[i];
+    }
+    obvHistory.push(obv);
+  }
+  
+  // OBV 추세 분석 (최근 10개 기간)
+  const recentOBV = obvHistory.slice(-10);
+  const obvTrend = recentOBV[recentOBV.length - 1] - recentOBV[0];
+  const priceTrend = closes[closes.length - 1] - closes[closes.length - 10];
+  
+  // 다이버전스 감지
+  let divergence = 'none';
+  if (obvTrend > 0 && priceTrend < 0) {
+    divergence = 'bullish'; // 가격 하락 + OBV 상승 = 매집 (강세 다이버전스)
+  } else if (obvTrend < 0 && priceTrend > 0) {
+    divergence = 'bearish'; // 가격 상승 + OBV 하락 = 분산 (약세 다이버전스)
+  }
+  
+  return {
+    obv: obv,
+    obvTrend: obvTrend > 0 ? 'up' : obvTrend < 0 ? 'down' : 'flat',
+    divergence: divergence
+  };
+};
+
+// ATR (Average True Range) - 변동성 측정 및 손절가 계산용 [신규]
+const calculateATR = (highs, lows, closes, period = 14) => {
+  if (closes.length < period + 1) return null;
+  
+  const trValues = [];
+  
+  for (let i = 1; i < closes.length; i++) {
+    const tr = Math.max(
+      highs[i] - lows[i],
+      Math.abs(highs[i] - closes[i - 1]),
+      Math.abs(lows[i] - closes[i - 1])
+    );
+    trValues.push(tr);
+  }
+  
+  // ATR = TR의 이동평균
+  const recentTR = trValues.slice(-period);
+  const atr = recentTR.reduce((a, b) => a + b, 0) / period;
+  
+  // ATR 기반 변동성 등급
+  const currentPrice = closes[closes.length - 1];
+  const atrPercent = (atr / currentPrice) * 100;
+  
+  let volatility = 'normal';
+  if (atrPercent > 5) volatility = 'very_high';
+  else if (atrPercent > 3) volatility = 'high';
+  else if (atrPercent < 1) volatility = 'low';
+  
+  return {
+    atr: atr,
+    atrPercent: atrPercent,
+    volatility: volatility
+  };
+};
+
+// 손절가 계산 함수 [신규]
+const calculateStopLoss = (entryPrice, atrData, config) => {
+  const stopType = config.STOP_LOSS_TYPE || 'atr';
+  
+  let stopLossPrice, stopLossPercent;
+  
+  if (stopType === 'percent') {
+    // 고정 퍼센트 방식
+    stopLossPercent = config.STOP_LOSS_PERCENT || 3;
+    stopLossPrice = entryPrice * (1 - stopLossPercent / 100);
+  } else {
+    // ATR 기반 방식 (권장)
+    const multiplier = config.ATR_STOP_MULTIPLIER || 2;
+    const atr = atrData?.atr || entryPrice * 0.02;
+    stopLossPrice = entryPrice - (atr * multiplier);
+    stopLossPercent = ((entryPrice - stopLossPrice) / entryPrice * 100);
+  }
+  
+  // 목표가 계산 (리스크:리워드 = 1:2)
+  const riskAmount = entryPrice - stopLossPrice;
+  const targetPrice1 = entryPrice + (riskAmount * 1.5); // 1차 목표 (1:1.5)
+  const targetPrice2 = entryPrice + (riskAmount * 2);   // 2차 목표 (1:2)
+  const targetPrice3 = entryPrice + (riskAmount * 3);   // 3차 목표 (1:3)
+  
+  return {
+    entryPrice: entryPrice,
+    stopLossPrice: stopLossPrice,
+    stopLossPercent: stopLossPercent.toFixed(2),
+    targetPrice1: targetPrice1,
+    targetPrice2: targetPrice2,
+    targetPrice3: targetPrice3,
+    riskRewardRatio: '1:2'
+  };
 };
 
 // True Range 계산 (ADX용 헬퍼)
@@ -252,12 +581,45 @@ const calculateStochastic = (highs, lows, closes, period = 14) => {
 };
 
 // ============================================
-// 종합 분석 함수
+// 종합 분석 함수 (바이낸스 기준 + 업비트 가격)
 // ============================================
 
 const analyzeMarket = async (market) => {
   try {
-    const candles = await fetchCandles(market, config.CANDLE_COUNT, config.CANDLE_UNIT);
+    const coinSymbol = market.replace('KRW-', '');
+    const binanceSymbol = `${coinSymbol}USDT`;
+    
+    // 바이낸스 심볼 존재 확인
+    const binanceSymbols = await getBinanceSymbols();
+    const hasBinanceData = binanceSymbols.includes(binanceSymbol);
+    
+    let candles, binancePrice, binanceChange;
+    let useBinance = hasBinanceData && config.USE_BINANCE_ANALYSIS !== false;
+    
+    if (useBinance) {
+      try {
+        // 바이낸스 데이터 사용
+        candles = await fetchBinanceCandles(binanceSymbol, '1h', config.CANDLE_COUNT);
+        const binance24h = await fetchBinance24h(binanceSymbol);
+        binancePrice = binance24h.price;
+        binanceChange = binance24h.priceChangePercent;
+      } catch (e) {
+        // 바이낸스 실패 시 업비트로 폴백
+        useBinance = false;
+      }
+    }
+    
+    if (!useBinance) {
+      // 업비트 데이터 사용 (폴백)
+      const endpoint = `/candles/minutes/${config.CANDLE_UNIT}?market=${market}&count=${config.CANDLE_COUNT}`;
+      const upbitCandles = await fetchUpbitAPI(endpoint);
+      candles = upbitCandles.reverse().map(c => ({
+        trade_price: c.trade_price,
+        high_price: c.high_price,
+        low_price: c.low_price,
+        candle_acc_trade_volume: c.candle_acc_trade_volume
+      }));
+    }
     
     if (candles.length < 50) {
       console.log(`⚠️ ${market}: 데이터 부족`);
@@ -270,15 +632,82 @@ const analyzeMarket = async (market) => {
     const lows = candles.map(c => c.low_price);
     const volumes = candles.map(c => c.candle_acc_trade_volume);
     
-    const currentPrice = closes[closes.length - 1];
+    const currentAnalysisPrice = closes[closes.length - 1];
     const prevPrice = closes[closes.length - 2];
-    const priceChange = ((currentPrice - prevPrice) / prevPrice * 100).toFixed(2);
+    const analysisChange = ((currentAnalysisPrice - prevPrice) / prevPrice * 100).toFixed(2);
+
+    // ============================================
+    // [신규] 멀티 타임프레임 분석 (일봉 대추세 확인)
+    // ============================================
+    let dailyTrend = { isBullish: true, ma20: null };
+    if (useBinance) {
+      try {
+        const dailyCandles = await fetchBinanceCandles(binanceSymbol, '1d', 30);
+        if (dailyCandles.length >= 20) {
+          const dailyCloses = dailyCandles.map(c => c.trade_price);
+          const dailyMa20 = calculateSMA(dailyCloses, 20);
+          const currentDailyPrice = dailyCloses[dailyCloses.length - 1];
+          dailyTrend = {
+            isBullish: currentDailyPrice > dailyMa20,
+            ma20: dailyMa20,
+            currentPrice: currentDailyPrice,
+            aboveMa: ((currentDailyPrice - dailyMa20) / dailyMa20 * 100).toFixed(2)
+          };
+        }
+      } catch (e) {
+        // 일봉 조회 실패해도 계속 진행
+      }
+    }
+
+    // ============================================
+    // [신규] 펀딩비 분석 (선물 시장 심리)
+    // ============================================
+    let fundingData = null;
+    let longShortData = null;
+    if (useBinance && config.USE_FUNDING_ANALYSIS !== false) {
+      try {
+        fundingData = await fetchFundingRate(binanceSymbol);
+        longShortData = await fetchLongShortRatio(binanceSymbol);
+      } catch (e) {
+        // 펀딩비 조회 실패해도 계속 진행
+      }
+    }
+
+    // ============================================
+    // [신규] 호가창 분석 (매수/매도 벽)
+    // ============================================
+    let orderBookData = null;
+    if (useBinance && config.USE_ORDERBOOK_ANALYSIS !== false) {
+      try {
+        orderBookData = await fetchOrderBook(binanceSymbol, 20);
+      } catch (e) {
+        // 호가창 조회 실패해도 계속 진행
+      }
+    }
+
+    // 업비트 현재가 조회 (항상)
+    let upbitPrice, upbitChange, kimchiPremium = null;
+    try {
+      const upbitTicker = await fetchUpbitTicker(market);
+      upbitPrice = upbitTicker.trade_price;
+      upbitChange = upbitTicker.signed_change_rate * 100;
+      
+      // 김치 프리미엄 계산 (바이낸스 데이터 있을 때만)
+      if (useBinance && binancePrice) {
+        const exchangeRate = await fetchUSDKRWRate();
+        const binancePriceKRW = binancePrice * exchangeRate;
+        kimchiPremium = ((upbitPrice - binancePriceKRW) / binancePriceKRW * 100).toFixed(2);
+      }
+    } catch (e) {
+      console.log(`⚠️ ${market}: 업비트 가격 조회 실패`);
+    }
 
     // 지표 계산
     const params = config.INDICATOR_PARAMS;
     
     const rsi = calculateRSI(closes, params.RSI_PERIOD);
     const mfi = calculateMFI(highs, lows, closes, volumes, params.MFI_PERIOD);
+    const obvData = calculateOBV(closes, volumes); // [신규] OBV
     const adxData = calculateADX(highs, lows, closes, params.ADX_PERIOD);
     const macd = calculateMACD(closes, params.MACD_FAST, params.MACD_SLOW, params.MACD_SIGNAL);
     const bb = calculateBollingerBands(closes, params.BB_PERIOD, params.BB_STD_DEV);
@@ -292,17 +721,95 @@ const analyzeMarket = async (market) => {
     const currentVolume = volumes[volumes.length - 1];
     const volumeRatio = avgVolume ? currentVolume / avgVolume : 1;
 
+    // ATR 계산 (손절가용) [신규]
+    const atrData = calculateATR(highs, lows, closes, config.ATR_PERIOD || 14);
+    
+    // 손절가 계산 [신규]
+    const entryPrice = upbitPrice || currentAnalysisPrice;
+    const stopLossData = calculateStopLoss(entryPrice, atrData, config);
+
     // 추세 강도 판단 (ADX 기반)
     const adx = adxData?.adx || 0;
     const isStrongTrend = adx > (params.ADX_STRONG_TREND || 25);
-    const isUpTrend = smaShort > smaLong && currentPrice > smaShort;
+    const isUpTrend = smaShort > smaLong && currentAnalysisPrice > smaShort;
+    
+    // 일봉 대추세 확인
+    const isDailyBullish = dailyTrend.isBullish;
 
     // 신호 분석 및 점수 계산
     const signals = [];
     let totalScore = 0;
     const weights = config.INDICATOR_WEIGHTS;
+    
+    // ============================================
+    // [신규] 멀티타임프레임 필터 (일봉 기반)
+    // ============================================
+    let trendMultiplier = 1.0;
+    if (isDailyBullish) {
+      signals.push({ indicator: '일봉추세', signal: `상승 추세 (MA20 위)`, score: 5, type: 'buy' });
+      totalScore += 5;
+      trendMultiplier = 1.1; // 상승장에서 매수 신호 가중치 증가
+    } else {
+      signals.push({ indicator: '일봉추세', signal: `하락 추세 (MA20 아래)`, score: -5, type: 'sell' });
+      totalScore -= 5;
+      trendMultiplier = 0.8; // 하락장에서 매수 신호 가중치 감소
+    }
 
-    // 0. ADX 분석 (추세 강도) [신규]
+    // ============================================
+    // [신규] OBV 분석 (세력 매집/분산)
+    // ============================================
+    if (obvData && weights.OBV) {
+      if (obvData.divergence === 'bullish') {
+        signals.push({ indicator: 'OBV', signal: '강세 다이버전스 (세력 매집)', score: weights.OBV, type: 'buy' });
+        totalScore += weights.OBV;
+      } else if (obvData.divergence === 'bearish') {
+        signals.push({ indicator: 'OBV', signal: '약세 다이버전스 (세력 분산)', score: -weights.OBV * 0.5, type: 'sell' });
+        totalScore -= weights.OBV * 0.5;
+      } else if (obvData.obvTrend === 'up') {
+        signals.push({ indicator: 'OBV', signal: '거래량 유입 중', score: weights.OBV * 0.5, type: 'neutral' });
+        totalScore += weights.OBV * 0.5;
+      } else {
+        signals.push({ indicator: 'OBV', signal: '거래량 중립', score: 0, type: 'neutral' });
+      }
+    }
+
+    // ============================================
+    // [신규] 펀딩비 분석 (숏스퀴즈 예측)
+    // ============================================
+    if (fundingData && weights.FUNDING) {
+      const fr = fundingData.fundingRate;
+      if (fr < -0.1) {
+        // 강한 마이너스 펀딩비 = 숏 우세 = 숏스퀴즈 가능성
+        signals.push({ indicator: '펀딩비', signal: `강한 숏 우세 (${fr.toFixed(3)}%) - 숏스퀴즈 가능`, score: weights.FUNDING, type: 'buy' });
+        totalScore += weights.FUNDING;
+      } else if (fr < 0) {
+        signals.push({ indicator: '펀딩비', signal: `숏 우세 (${fr.toFixed(3)}%)`, score: weights.FUNDING * 0.5, type: 'neutral' });
+        totalScore += weights.FUNDING * 0.5;
+      } else if (fr > 0.1) {
+        // 강한 플러스 펀딩비 = 롱 과열 = 조정 가능성
+        signals.push({ indicator: '펀딩비', signal: `롱 과열 (${fr.toFixed(3)}%) - 조정 주의`, score: -weights.FUNDING * 0.3, type: 'sell' });
+        totalScore -= weights.FUNDING * 0.3;
+      } else {
+        signals.push({ indicator: '펀딩비', signal: `중립 (${fr.toFixed(3)}%)`, score: 0, type: 'neutral' });
+      }
+    }
+
+    // ============================================
+    // [신규] 호가창 분석 (매수/매도 벽)
+    // ============================================
+    if (orderBookData && weights.ORDERBOOK) {
+      if (orderBookData.buyPressure === 'strong') {
+        signals.push({ indicator: '호가창', signal: `매수세 우위 (${orderBookData.bidAskRatio.toFixed(2)}x)`, score: weights.ORDERBOOK, type: 'buy' });
+        totalScore += weights.ORDERBOOK;
+      } else if (orderBookData.buyPressure === 'weak') {
+        signals.push({ indicator: '호가창', signal: `매도세 우위 (${orderBookData.bidAskRatio.toFixed(2)}x)`, score: -weights.ORDERBOOK * 0.5, type: 'sell' });
+        totalScore -= weights.ORDERBOOK * 0.5;
+      } else {
+        signals.push({ indicator: '호가창', signal: `수급 균형 (${orderBookData.bidAskRatio.toFixed(2)}x)`, score: 0, type: 'neutral' });
+      }
+    }
+
+    // 0. ADX 분석 (추세 강도)
     if (adxData && weights.ADX) {
       if (adx > 40) {
         signals.push({ indicator: 'ADX', signal: `매우 강한 추세 (${adx.toFixed(0)})`, score: weights.ADX, type: 'buy' });
@@ -318,16 +825,17 @@ const analyzeMarket = async (market) => {
       }
     }
 
-    // 1. RSI 분석 (추세장 가변 로직)
+    // 1. RSI 분석 (추세장 가변 로직 + 일봉 필터)
     if (rsi !== null) {
       if (rsi < params.RSI_OVERSOLD) {
-        signals.push({ indicator: 'RSI', signal: '과매도 (강력 매수)', score: weights.RSI, type: 'buy' });
-        totalScore += weights.RSI;
+        // 일봉 상승장에서만 풀 점수
+        const rsiScore = isDailyBullish ? weights.RSI : weights.RSI * 0.5;
+        signals.push({ indicator: 'RSI', signal: '과매도 (강력 매수)', score: rsiScore, type: 'buy' });
+        totalScore += rsiScore;
       } else if (rsi < 40) {
         signals.push({ indicator: 'RSI', signal: '매수 관심', score: weights.RSI * 0.5, type: 'neutral' });
         totalScore += weights.RSI * 0.5;
       } else if (rsi > params.RSI_OVERBOUGHT) {
-        // 강한 추세장에서는 과매수도 매도가 아닐 수 있음
         if (isStrongTrend && isUpTrend) {
           signals.push({ indicator: 'RSI', signal: '과매수 돌파 (추세 지속)', score: weights.RSI * 0.3, type: 'neutral' });
           totalScore += weights.RSI * 0.3;
@@ -341,7 +849,7 @@ const analyzeMarket = async (market) => {
       }
     }
 
-    // 2. MFI 분석 (자금 흐름) [신규]
+    // 2. MFI 분석 (자금 흐름)
     if (mfi !== null && weights.MFI) {
       if (mfi < params.MFI_OVERSOLD) {
         signals.push({ indicator: 'MFI', signal: '자금 과매도 (스마트머니 진입)', score: weights.MFI, type: 'buy' });
@@ -382,15 +890,15 @@ const analyzeMarket = async (market) => {
 
     // 4. 볼린저밴드 분석
     if (bb.lower !== null) {
-      const bbPosition = ((currentPrice - bb.lower) / (bb.upper - bb.lower)) * 100;
+      const bbPosition = ((currentAnalysisPrice - bb.lower) / (bb.upper - bb.lower)) * 100;
       
-      if (currentPrice <= bb.lower) {
+      if (currentAnalysisPrice <= bb.lower) {
         signals.push({ indicator: '볼린저밴드', signal: '하단 이탈 (반등 가능)', score: weights.BOLLINGER, type: 'buy' });
         totalScore += weights.BOLLINGER;
       } else if (bbPosition < 30) {
         signals.push({ indicator: '볼린저밴드', signal: '하단 근접', score: weights.BOLLINGER * 0.7, type: 'neutral' });
         totalScore += weights.BOLLINGER * 0.7;
-      } else if (currentPrice >= bb.upper) {
+      } else if (currentAnalysisPrice >= bb.upper) {
         if (isStrongTrend && isUpTrend) {
           signals.push({ indicator: '볼린저밴드', signal: '상단 돌파 (추세 강화)', score: weights.BOLLINGER * 0.5, type: 'buy' });
           totalScore += weights.BOLLINGER * 0.5;
@@ -406,16 +914,16 @@ const analyzeMarket = async (market) => {
 
     // 5. 이동평균선 분석 (추세 필터 강화)
     if (smaShort && smaLong) {
-      const trendStrength = smaTrend ? (currentPrice > smaTrend ? '장기상승' : '장기하락') : '';
+      const trendStrength = smaTrend ? (currentAnalysisPrice > smaTrend ? '장기상승' : '장기하락') : '';
       
-      if (currentPrice > smaShort && smaShort > smaLong) {
-        const bonus = (smaTrend && currentPrice > smaTrend) ? 1.2 : 1;
+      if (currentAnalysisPrice > smaShort && smaShort > smaLong) {
+        const bonus = (smaTrend && currentAnalysisPrice > smaTrend) ? 1.2 : 1;
         signals.push({ indicator: '이동평균', signal: `정배열 (강세) ${trendStrength}`, score: weights.MA * bonus, type: 'buy' });
         totalScore += weights.MA * bonus;
-      } else if (currentPrice > smaShort) {
+      } else if (currentAnalysisPrice > smaShort) {
         signals.push({ indicator: '이동평균', signal: '단기 상승', score: weights.MA * 0.5, type: 'neutral' });
         totalScore += weights.MA * 0.5;
-      } else if (currentPrice < smaShort && smaShort < smaLong) {
+      } else if (currentAnalysisPrice < smaShort && smaShort < smaLong) {
         signals.push({ indicator: '이동평균', signal: '역배열 (약세)', score: -weights.MA * 0.3, type: 'sell' });
         totalScore -= weights.MA * 0.3;
       } else {
@@ -480,12 +988,43 @@ const analyzeMarket = async (market) => {
     }
 
     // BB 위치 계산
-    const bbPosition = bb.lower ? ((currentPrice - bb.lower) / (bb.upper - bb.lower) * 100).toFixed(0) : 'N/A';
+    const bbPosition = bb.lower ? ((currentAnalysisPrice - bb.lower) / (bb.upper - bb.lower) * 100).toFixed(0) : 'N/A';
 
     return {
       market,
-      currentPrice,
-      priceChange: parseFloat(priceChange),
+      // 분석 기준 (바이낸스 또는 업비트)
+      analysisSource: useBinance ? 'binance' : 'upbit',
+      binanceSymbol: useBinance ? binanceSymbol : null,
+      
+      // 바이낸스 가격 (USD)
+      binancePrice: binancePrice || null,
+      binanceChange: binanceChange || null,
+      
+      // 업비트 가격 (KRW)
+      currentPrice: upbitPrice || currentAnalysisPrice,
+      priceChange: upbitChange || parseFloat(analysisChange),
+      
+      // 김치 프리미엄
+      kimchiPremium: kimchiPremium,
+      
+      // [신규] 멀티타임프레임 (일봉 추세)
+      dailyTrend: dailyTrend,
+      isDailyBullish: isDailyBullish,
+      
+      // [신규] 펀딩비 데이터
+      fundingData: fundingData,
+      
+      // [신규] 호가창 데이터
+      orderBookData: orderBookData,
+      
+      // [신규] OBV 데이터
+      obvData: obvData,
+      
+      // [신규] ATR 및 손절가
+      atrData: atrData,
+      stopLoss: stopLossData,
+      
+      // 기술적 지표
       rsi: rsi?.toFixed(1) || 'N/A',
       mfi: mfi?.toFixed(1) || 'N/A',
       adx: adx?.toFixed(1) || 'N/A',
@@ -522,5 +1061,9 @@ module.exports = {
   getMarketSummary,
   fetchCandles,
   fetchTicker,
-  fetchAllKRWMarkets
+  fetchAllKRWMarkets,
+  fetchBinanceCandles,
+  fetchBinanceTicker,
+  fetchAllBinanceUSDTMarkets,
+  fetchUSDKRWRate
 };
