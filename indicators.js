@@ -95,6 +95,93 @@ const calculateRSI = (closes, period = 14) => {
   return 100 - (100 / (1 + rs));
 };
 
+// MFI (Money Flow Index) - 거래량을 포함한 RSI [신규]
+const calculateMFI = (highs, lows, closes, volumes, period = 14) => {
+  if (closes.length < period + 1) return null;
+
+  let posFlow = 0;
+  let negFlow = 0;
+
+  for (let i = closes.length - period; i < closes.length; i++) {
+    const typicalPrice = (highs[i] + lows[i] + closes[i]) / 3;
+    const prevTypicalPrice = (highs[i-1] + lows[i-1] + closes[i-1]) / 3;
+    const rawMoneyFlow = typicalPrice * volumes[i];
+
+    if (typicalPrice > prevTypicalPrice) posFlow += rawMoneyFlow;
+    else if (typicalPrice < prevTypicalPrice) negFlow += rawMoneyFlow;
+  }
+
+  if (negFlow === 0) return 100;
+  const moneyFlowRatio = posFlow / negFlow;
+  return 100 - (100 / (1 + moneyFlowRatio));
+};
+
+// True Range 계산 (ADX용 헬퍼)
+const getTR = (high, low, prevClose) => {
+  return Math.max(
+    high - low,
+    Math.abs(high - prevClose),
+    Math.abs(low - prevClose)
+  );
+};
+
+// ADX (Average Directional Index) - 추세 강도 측정 [신규]
+const calculateADX = (highs, lows, closes, period = 14) => {
+  if (closes.length < period * 2) return null;
+
+  let trSum = 0, dmPlusSum = 0, dmMinusSum = 0;
+  const dxValues = [];
+
+  // 초기 TR, DM 계산
+  for (let i = 1; i <= period; i++) {
+    const tr = getTR(highs[i], lows[i], closes[i-1]);
+    const upMove = highs[i] - highs[i-1];
+    const downMove = lows[i-1] - lows[i];
+    
+    trSum += tr;
+    dmPlusSum += (upMove > downMove && upMove > 0) ? upMove : 0;
+    dmMinusSum += (downMove > upMove && downMove > 0) ? downMove : 0;
+  }
+
+  let atr = trSum / period;
+  let plusDI = (dmPlusSum / atr) * 100;
+  let minusDI = (dmMinusSum / atr) * 100;
+
+  // DX 계산
+  for (let i = period + 1; i < closes.length; i++) {
+    const tr = getTR(highs[i], lows[i], closes[i-1]);
+    const upMove = highs[i] - highs[i-1];
+    const downMove = lows[i-1] - lows[i];
+    
+    const dmPlus = (upMove > downMove && upMove > 0) ? upMove : 0;
+    const dmMinus = (downMove > upMove && downMove > 0) ? downMove : 0;
+
+    // Wilder's Smoothing
+    atr = (atr * (period - 1) + tr) / period;
+    const smoothedDmPlus = (dmPlusSum * (period - 1) + dmPlus) / period;
+    const smoothedDmMinus = (dmMinusSum * (period - 1) + dmMinus) / period;
+    
+    dmPlusSum = smoothedDmPlus;
+    dmMinusSum = smoothedDmMinus;
+
+    plusDI = (smoothedDmPlus / atr) * 100;
+    minusDI = (smoothedDmMinus / atr) * 100;
+
+    const diSum = plusDI + minusDI;
+    if (diSum !== 0) {
+      const dx = (Math.abs(plusDI - minusDI) / diSum) * 100;
+      dxValues.push(dx);
+    }
+  }
+
+  // ADX = DX의 평균
+  if (dxValues.length < period) return null;
+  const recentDX = dxValues.slice(-period);
+  const adx = recentDX.reduce((a, b) => a + b, 0) / period;
+  
+  return { adx, plusDI, minusDI };
+};
+
 // MACD
 const calculateMACD = (closes, fast = 12, slow = 26, signal = 9) => {
   if (closes.length < slow + signal) {
@@ -191,40 +278,92 @@ const analyzeMarket = async (market) => {
     const params = config.INDICATOR_PARAMS;
     
     const rsi = calculateRSI(closes, params.RSI_PERIOD);
+    const mfi = calculateMFI(highs, lows, closes, volumes, params.MFI_PERIOD);
+    const adxData = calculateADX(highs, lows, closes, params.ADX_PERIOD);
     const macd = calculateMACD(closes, params.MACD_FAST, params.MACD_SLOW, params.MACD_SIGNAL);
     const bb = calculateBollingerBands(closes, params.BB_PERIOD, params.BB_STD_DEV);
     const stoch = calculateStochastic(highs, lows, closes, params.STOCH_PERIOD);
     const smaShort = calculateSMA(closes, params.MA_SHORT);
     const smaLong = calculateSMA(closes, params.MA_LONG);
+    const smaTrend = calculateSMA(closes, params.MA_TREND || 100);
     
     // 거래량 분석
     const avgVolume = calculateSMA(volumes, 20);
     const currentVolume = volumes[volumes.length - 1];
     const volumeRatio = avgVolume ? currentVolume / avgVolume : 1;
 
+    // 추세 강도 판단 (ADX 기반)
+    const adx = adxData?.adx || 0;
+    const isStrongTrend = adx > (params.ADX_STRONG_TREND || 25);
+    const isUpTrend = smaShort > smaLong && currentPrice > smaShort;
+
     // 신호 분석 및 점수 계산
     const signals = [];
     let totalScore = 0;
     const weights = config.INDICATOR_WEIGHTS;
 
-    // 1. RSI 분석
+    // 0. ADX 분석 (추세 강도) [신규]
+    if (adxData && weights.ADX) {
+      if (adx > 40) {
+        signals.push({ indicator: 'ADX', signal: `매우 강한 추세 (${adx.toFixed(0)})`, score: weights.ADX, type: 'buy' });
+        totalScore += weights.ADX;
+      } else if (adx > 25) {
+        signals.push({ indicator: 'ADX', signal: `강한 추세 (${adx.toFixed(0)})`, score: weights.ADX * 0.7, type: 'buy' });
+        totalScore += weights.ADX * 0.7;
+      } else if (adx > 20) {
+        signals.push({ indicator: 'ADX', signal: `약한 추세 (${adx.toFixed(0)})`, score: weights.ADX * 0.3, type: 'neutral' });
+        totalScore += weights.ADX * 0.3;
+      } else {
+        signals.push({ indicator: 'ADX', signal: `횡보장 (${adx.toFixed(0)})`, score: 0, type: 'neutral' });
+      }
+    }
+
+    // 1. RSI 분석 (추세장 가변 로직)
     if (rsi !== null) {
       if (rsi < params.RSI_OVERSOLD) {
-        signals.push({ indicator: 'RSI', signal: '과매도 (매수 기회)', score: weights.RSI, type: 'buy' });
+        signals.push({ indicator: 'RSI', signal: '과매도 (강력 매수)', score: weights.RSI, type: 'buy' });
         totalScore += weights.RSI;
       } else if (rsi < 40) {
         signals.push({ indicator: 'RSI', signal: '매수 관심', score: weights.RSI * 0.5, type: 'neutral' });
         totalScore += weights.RSI * 0.5;
       } else if (rsi > params.RSI_OVERBOUGHT) {
-        signals.push({ indicator: 'RSI', signal: '과매수 (주의)', score: -weights.RSI * 0.5, type: 'sell' });
-        totalScore -= weights.RSI * 0.5;
+        // 강한 추세장에서는 과매수도 매도가 아닐 수 있음
+        if (isStrongTrend && isUpTrend) {
+          signals.push({ indicator: 'RSI', signal: '과매수 돌파 (추세 지속)', score: weights.RSI * 0.3, type: 'neutral' });
+          totalScore += weights.RSI * 0.3;
+        } else {
+          signals.push({ indicator: 'RSI', signal: '과매수 (주의)', score: -weights.RSI * 0.5, type: 'sell' });
+          totalScore -= weights.RSI * 0.5;
+        }
       } else {
         signals.push({ indicator: 'RSI', signal: '중립', score: weights.RSI * 0.25, type: 'neutral' });
         totalScore += weights.RSI * 0.25;
       }
     }
 
-    // 2. MACD 분석
+    // 2. MFI 분석 (자금 흐름) [신규]
+    if (mfi !== null && weights.MFI) {
+      if (mfi < params.MFI_OVERSOLD) {
+        signals.push({ indicator: 'MFI', signal: '자금 과매도 (스마트머니 진입)', score: weights.MFI, type: 'buy' });
+        totalScore += weights.MFI;
+      } else if (mfi < 30) {
+        signals.push({ indicator: 'MFI', signal: '자금 유입 시작', score: weights.MFI * 0.6, type: 'neutral' });
+        totalScore += weights.MFI * 0.6;
+      } else if (mfi > params.MFI_OVERBOUGHT) {
+        if (isStrongTrend && isUpTrend) {
+          signals.push({ indicator: 'MFI', signal: '강한 자금 유입 (추세 지속)', score: weights.MFI * 0.4, type: 'neutral' });
+          totalScore += weights.MFI * 0.4;
+        } else {
+          signals.push({ indicator: 'MFI', signal: '자금 이탈 징후', score: -weights.MFI * 0.5, type: 'sell' });
+          totalScore -= weights.MFI * 0.5;
+        }
+      } else {
+        signals.push({ indicator: 'MFI', signal: '자금 흐름 중립', score: weights.MFI * 0.3, type: 'neutral' });
+        totalScore += weights.MFI * 0.3;
+      }
+    }
+
+    // 3. MACD 분석
     if (macd.macd !== null) {
       if (macd.histogram > 0 && macd.macd > macd.signal) {
         signals.push({ indicator: 'MACD', signal: '골든크로스 (상승)', score: weights.MACD, type: 'buy' });
@@ -241,7 +380,7 @@ const analyzeMarket = async (market) => {
       }
     }
 
-    // 3. 볼린저밴드 분석
+    // 4. 볼린저밴드 분석
     if (bb.lower !== null) {
       const bbPosition = ((currentPrice - bb.lower) / (bb.upper - bb.lower)) * 100;
       
@@ -252,19 +391,27 @@ const analyzeMarket = async (market) => {
         signals.push({ indicator: '볼린저밴드', signal: '하단 근접', score: weights.BOLLINGER * 0.7, type: 'neutral' });
         totalScore += weights.BOLLINGER * 0.7;
       } else if (currentPrice >= bb.upper) {
-        signals.push({ indicator: '볼린저밴드', signal: '상단 이탈 (과열)', score: -weights.BOLLINGER * 0.3, type: 'sell' });
-        totalScore -= weights.BOLLINGER * 0.3;
+        if (isStrongTrend && isUpTrend) {
+          signals.push({ indicator: '볼린저밴드', signal: '상단 돌파 (추세 강화)', score: weights.BOLLINGER * 0.5, type: 'buy' });
+          totalScore += weights.BOLLINGER * 0.5;
+        } else {
+          signals.push({ indicator: '볼린저밴드', signal: '상단 이탈 (과열)', score: -weights.BOLLINGER * 0.3, type: 'sell' });
+          totalScore -= weights.BOLLINGER * 0.3;
+        }
       } else {
         signals.push({ indicator: '볼린저밴드', signal: '중립', score: weights.BOLLINGER * 0.3, type: 'neutral' });
         totalScore += weights.BOLLINGER * 0.3;
       }
     }
 
-    // 4. 이동평균선 분석
+    // 5. 이동평균선 분석 (추세 필터 강화)
     if (smaShort && smaLong) {
+      const trendStrength = smaTrend ? (currentPrice > smaTrend ? '장기상승' : '장기하락') : '';
+      
       if (currentPrice > smaShort && smaShort > smaLong) {
-        signals.push({ indicator: '이동평균', signal: '정배열 (강세)', score: weights.MA, type: 'buy' });
-        totalScore += weights.MA;
+        const bonus = (smaTrend && currentPrice > smaTrend) ? 1.2 : 1;
+        signals.push({ indicator: '이동평균', signal: `정배열 (강세) ${trendStrength}`, score: weights.MA * bonus, type: 'buy' });
+        totalScore += weights.MA * bonus;
       } else if (currentPrice > smaShort) {
         signals.push({ indicator: '이동평균', signal: '단기 상승', score: weights.MA * 0.5, type: 'neutral' });
         totalScore += weights.MA * 0.5;
@@ -277,7 +424,7 @@ const analyzeMarket = async (market) => {
       }
     }
 
-    // 5. 스토캐스틱 분석
+    // 6. 스토캐스틱 분석 (추세장 가변 로직)
     if (stoch.k !== null) {
       if (stoch.k < params.STOCH_OVERSOLD) {
         signals.push({ indicator: '스토캐스틱', signal: '과매도', score: weights.STOCHASTIC, type: 'buy' });
@@ -286,15 +433,20 @@ const analyzeMarket = async (market) => {
         signals.push({ indicator: '스토캐스틱', signal: '매수 관심', score: weights.STOCHASTIC * 0.6, type: 'neutral' });
         totalScore += weights.STOCHASTIC * 0.6;
       } else if (stoch.k > params.STOCH_OVERBOUGHT) {
-        signals.push({ indicator: '스토캐스틱', signal: '과매수', score: -weights.STOCHASTIC * 0.3, type: 'sell' });
-        totalScore -= weights.STOCHASTIC * 0.3;
+        if (isStrongTrend && isUpTrend) {
+          signals.push({ indicator: '스토캐스틱', signal: '과매수 유지 (추세)', score: weights.STOCHASTIC * 0.3, type: 'neutral' });
+          totalScore += weights.STOCHASTIC * 0.3;
+        } else {
+          signals.push({ indicator: '스토캐스틱', signal: '과매수', score: -weights.STOCHASTIC * 0.3, type: 'sell' });
+          totalScore -= weights.STOCHASTIC * 0.3;
+        }
       } else {
         signals.push({ indicator: '스토캐스틱', signal: '중립', score: weights.STOCHASTIC * 0.3, type: 'neutral' });
         totalScore += weights.STOCHASTIC * 0.3;
       }
     }
 
-    // 6. 거래량 분석
+    // 7. 거래량 분석
     if (volumeRatio > params.VOLUME_SURGE_RATIO) {
       signals.push({ indicator: '거래량', signal: `급증 (${volumeRatio.toFixed(1)}배)`, score: weights.VOLUME, type: 'buy' });
       totalScore += weights.VOLUME;
@@ -335,6 +487,9 @@ const analyzeMarket = async (market) => {
       currentPrice,
       priceChange: parseFloat(priceChange),
       rsi: rsi?.toFixed(1) || 'N/A',
+      mfi: mfi?.toFixed(1) || 'N/A',
+      adx: adx?.toFixed(1) || 'N/A',
+      isStrongTrend,
       macd: macd.histogram?.toFixed(0) || 'N/A',
       bbPosition,
       stochK: stoch.k?.toFixed(0) || 'N/A',

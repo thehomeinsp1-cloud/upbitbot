@@ -8,11 +8,13 @@ module.exports = {
   // 🔐 텔레그램 설정 (필수!)
   // ============================================
   
-  // 텔레그램 봇 토큰 (@BotFather에서 발급)
-  TELEGRAM_BOT_TOKEN: '8429601486:AAGy-fqXtGquEEITwmWcQmRWwiFjMWyPjmA',
+  // 텔레그램 봇 토큰 - Render 환경변수에서 가져옴
+  // Render.com → Environment → TELEGRAM_BOT_TOKEN 에 설정하세요
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || 'YOUR_BOT_TOKEN_HERE',
   
-  // 텔레그램 채팅 ID (@userinfobot 또는 @getidsbot에서 확인)
-  TELEGRAM_CHAT_ID: '501301859',
+  // 텔레그램 채팅 ID - Render 환경변수에서 가져옴  
+  // Render.com → Environment → TELEGRAM_CHAT_ID 에 설정하세요
+  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID || 'YOUR_CHAT_ID_HERE',
 
   // ============================================
   // 📊 모니터링할 코인 목록
@@ -85,11 +87,13 @@ module.exports = {
   // ============================================
   
   INDICATOR_WEIGHTS: {
-    RSI: 20,           // RSI
-    MACD: 20,          // MACD
-    BOLLINGER: 20,     // 볼린저밴드
-    MA: 15,            // 이동평균선
-    STOCHASTIC: 15,    // 스토캐스틱
+    RSI: 12,           // RSI
+    MFI: 13,           // [신규] 자금 흐름 지수
+    ADX: 10,           // [신규] 추세 강도
+    MACD: 18,          // MACD
+    BOLLINGER: 17,     // 볼린저밴드
+    MA: 10,            // 이동평균선
+    STOCHASTIC: 10,    // 스토캐스틱
     VOLUME: 10,        // 거래량
   },
 
@@ -102,6 +106,15 @@ module.exports = {
     RSI_OVERSOLD: 30,      // 과매도 기준
     RSI_OVERBOUGHT: 70,    // 과매수 기준
     
+    // [신규] MFI 파라미터
+    MFI_PERIOD: 14,
+    MFI_OVERSOLD: 20,
+    MFI_OVERBOUGHT: 80,
+    
+    // [신규] ADX 파라미터
+    ADX_PERIOD: 14,
+    ADX_STRONG_TREND: 25,  // 이 값 이상이면 강한 추세
+    
     MACD_FAST: 12,
     MACD_SLOW: 26,
     MACD_SIGNAL: 9,
@@ -111,6 +124,7 @@ module.exports = {
     
     MA_SHORT: 20,
     MA_LONG: 50,
+    MA_TREND: 100,         // [신규] 장기 추세 확인용
     
     STOCH_PERIOD: 14,
     STOCH_OVERSOLD: 20,

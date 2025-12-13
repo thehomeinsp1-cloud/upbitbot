@@ -132,7 +132,11 @@ const formatAlertMessage = (analysis) => {
   
   message += `• *최종 점수: ${analysis.finalScore}점*\n\n`;
   
+  // 추세 정보 추가
+  const trendIcon = analysis.isStrongTrend ? '🔥' : '➖';
   message += `📈 *기술적 지표:*\n`;
+  message += `• ADX: ${analysis.adx} ${trendIcon} ${analysis.isStrongTrend ? '(강한 추세)' : '(횡보)'}\n`;
+  message += `• MFI: ${analysis.mfi} (자금흐름)\n`;
   message += `• RSI: ${analysis.rsi} ${parseFloat(analysis.rsi) < 30 ? '(과매도🟢)' : ''}\n`;
   message += `• MACD: ${parseFloat(analysis.macd) > 0 ? '상승추세🟢' : '하락추세🔴'}\n`;
   message += `• 볼린저: ${analysis.bbPosition}% 위치\n`;
@@ -240,13 +244,16 @@ const sendStartupMessage = async () => {
     
   const newsStatus = config.USE_NEWS_ANALYSIS ? '✅ 활성화' : '❌ 비활성화';
     
-  const message = `🤖 *암호화폐 신호 봇 시작!*\n\n` +
+  const message = `🤖 *암호화폐 신호 봇 v2.0 시작!*\n\n` +
     `📌 모니터링 코인: ${watchCoins.length}개\n` +
     `⏱ 분석 주기: ${config.ANALYSIS_INTERVAL / 60000}분\n` +
     `🎯 알림 기준: ${config.ALERT_THRESHOLD}점 이상\n\n` +
-    `📊 *분석 항목:*\n` +
-    `• 기술적 지표 6종 ✅\n` +
-    `• 전세계 뉴스 감성 ${newsStatus}\n\n` +
+    `📊 *분석 지표 (8종):*\n` +
+    `• RSI, MFI(자금흐름), ADX(추세강도)\n` +
+    `• MACD, 볼린저밴드, 이동평균선\n` +
+    `• 스토캐스틱, 거래량\n` +
+    `• 추세 필터 적용 ✅\n\n` +
+    `📰 뉴스 감성: ${newsStatus}\n` +
     `🌐 서버: Render.com (24시간)\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
   
