@@ -49,13 +49,26 @@ module.exports = {
   NEWS_CHECK_THRESHOLD: 60,
 
   // ============================================
-  // 🌐 바이낸스 연동 설정
+  // 🌐 글로벌 가격 연동 설정
   // ============================================
   
-  USE_BINANCE_ANALYSIS: true,
+  // 바이낸스 API 직접 사용 (Render.com에서 차단될 수 있음)
+  USE_BINANCE_ANALYSIS: false,
+  
+  // CoinGecko API 사용 (바이낸스 차단 시 대체)
+  // 글로벌 USD 가격 + 김치 프리미엄 계산용
+  USE_COINGECKO: true,
+  
+  // 김치 프리미엄 표시 여부
   SHOW_KIMCHI_PREMIUM: true,
-  USE_FUNDING_ANALYSIS: true,
+  
+  // 펀딩비 분석 (바이낸스 선물 API 필요 - 현재 차단)
+  USE_FUNDING_ANALYSIS: false,
+  
+  // 호가창 분석 (업비트 API 사용)
   USE_ORDERBOOK_ANALYSIS: true,
+  
+  // 멀티타임프레임 사용 여부 (일봉 추세 확인)
   USE_MULTI_TIMEFRAME: true,
 
   // ============================================

@@ -119,10 +119,13 @@ const formatAlertMessage = (analysis) => {
   
   let message = `🚀 *${coinName} 강력 매수 신호!*\n\n`;
   
-  // 분석 소스 표시
+  // 분석 소스 표시 (바이낸스 또는 CoinGecko)
   if (analysis.analysisSource === 'binance') {
-    message += `🌐 *분석 기준: 바이낸스*\n`;
-    message += `• 바이낸스: $${analysis.binancePrice?.toFixed(4) || 'N/A'} (${analysis.binanceChange >= 0 ? '+' : ''}${analysis.binanceChange?.toFixed(2) || 'N/A'}%)\n`;
+    message += `🌐 *글로벌 가격 (Binance):*\n`;
+    message += `• $${analysis.binancePrice?.toFixed(4) || 'N/A'} (${analysis.binanceChange >= 0 ? '+' : ''}${analysis.binanceChange?.toFixed(2) || 'N/A'}%)\n`;
+  } else if (analysis.analysisSource === 'coingecko' && analysis.binancePrice) {
+    message += `🌐 *글로벌 가격 (CoinGecko):*\n`;
+    message += `• $${analysis.binancePrice?.toFixed(4) || 'N/A'} (${analysis.binanceChange >= 0 ? '+' : ''}${analysis.binanceChange?.toFixed(2) || 'N/A'}%)\n`;
   }
   
   // 업비트 가격 (KRW)
@@ -131,7 +134,8 @@ const formatAlertMessage = (analysis) => {
   
   // 김치 프리미엄
   if (analysis.kimchiPremium !== null && analysis.kimchiPremium !== undefined) {
-    const premiumIcon = parseFloat(analysis.kimchiPremium) > 3 ? '🔴' : parseFloat(analysis.kimchiPremium) > 1 ? '🟡' : '🟢';
+    const premium = parseFloat(analysis.kimchiPremium);
+    const premiumIcon = premium > 3 ? '🔴' : premium > 1 ? '🟡' : premium < -1 ? '🟢역프' : '🟢';
     message += `• 김치 프리미엄: ${premiumIcon} ${analysis.kimchiPremium}%\n`;
   }
   message += '\n';
@@ -230,8 +234,8 @@ const runFullAnalysis = async () => {
     if (analysis) {
       results.push(analysis);
     }
-    // API 속도 제한 방지
-    await sleep(200);
+    // API 속도 제한 방지 (업비트 초당 10회 제한 고려)
+    await sleep(350);
   }
 
   // 점수순 정렬
@@ -302,24 +306,27 @@ const sendStartupMessage = async () => {
     : watchCoins.map(c => c.replace('KRW-', '')).join(', ');
     
   const newsStatus = config.USE_NEWS_ANALYSIS ? '✅' : '❌';
-  const fundingStatus = config.USE_FUNDING_ANALYSIS ? '✅' : '❌';
   const orderbookStatus = config.USE_ORDERBOOK_ANALYSIS ? '✅' : '❌';
+  const coingeckoStatus = config.USE_COINGECKO ? '✅' : '❌';
     
   const message = `🤖 *암호화폐 신호 봇 v4.0 시작!*\n\n` +
     `📌 모니터링: ${watchCoins.length}개 코인\n` +
     `⏱ 분석 주기: ${config.ANALYSIS_INTERVAL / 60000}분\n` +
     `🎯 알림 기준: ${config.ALERT_THRESHOLD}점 이상\n\n` +
-    `🌐 *분석 기준: 바이낸스*\n` +
-    `• 김치 프리미엄 ✅\n` +
-    `• 멀티타임프레임 (일봉) ✅\n\n` +
-    `📊 *기술적 지표 (11종):*\n` +
+    `🌐 *글로벌 가격:*\n` +
+    `• CoinGecko API ${coingeckoStatus}\n` +
+    `• 김치 프리미엄 ✅\n\n` +
+    `📊 *분석 기능:*\n` +
+    `• 멀티타임프레임 (일봉) ✅\n` +
+    `• 호가창 분석 ${orderbookStatus}\n` +
+    `• OBV (세력 매집) ✅\n\n` +
+    `📈 *기술적 지표 (10종):*\n` +
     `• RSI, MFI, OBV, ADX\n` +
-    `• MACD, 볼린저밴드, MA\n` +
-    `• 스토캐스틱, 거래량\n` +
-    `• 펀딩비 ${fundingStatus} | 호가창 ${orderbookStatus}\n\n` +
+    `• MACD, 볼린저, MA, Stoch\n` +
+    `• 거래량, 호가창\n\n` +
     `🛡️ *리스크 관리:*\n` +
-    `• ATR 기반 손절가 자동 계산\n` +
-    `• 목표가 (1:2 리워드) 제공\n\n` +
+    `• ATR 손절가 자동 계산\n` +
+    `• 목표가 (1:2) 제공\n\n` +
     `📰 뉴스 감성: ${newsStatus}\n` +
     `🖥 서버: Render.com (24시간)\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;

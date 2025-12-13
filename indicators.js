@@ -6,7 +6,129 @@
 const config = require('./config');
 
 // ============================================
-// 바이낸스 API 호출 (메인 분석용)
+// CoinGecko API (바이낸스 가격 대체)
+// ============================================
+
+// 코인 심볼 → CoinGecko ID 매핑
+const COINGECKO_IDS = {
+  'BTC': 'bitcoin', 'ETH': 'ethereum', 'XRP': 'ripple',
+  'SOL': 'solana', 'DOGE': 'dogecoin', 'ADA': 'cardano',
+  'AVAX': 'avalanche-2', 'DOT': 'polkadot', 'MATIC': 'matic-network',
+  'LINK': 'chainlink', 'ATOM': 'cosmos', 'UNI': 'uniswap',
+  'LTC': 'litecoin', 'BCH': 'bitcoin-cash', 'ETC': 'ethereum-classic',
+  'XLM': 'stellar', 'ALGO': 'algorand', 'VET': 'vechain',
+  'NEAR': 'near', 'APT': 'aptos', 'ARB': 'arbitrum',
+  'OP': 'optimism', 'INJ': 'injective-protocol', 'SUI': 'sui',
+  'SEI': 'sei-network', 'TIA': 'celestia', 'SAND': 'the-sandbox',
+  'MANA': 'decentraland', 'AXS': 'axie-infinity', 'AAVE': 'aave',
+  'CRV': 'curve-dao-token', 'MKR': 'maker', 'SNX': 'synthetix-network-token',
+  'COMP': 'compound-governance-token', 'LDO': 'lido-dao', 'RPL': 'rocket-pool',
+  'GMX': 'gmx', 'DYDX': 'dydx', 'SUSHI': 'sushi',
+  '1INCH': '1inch', 'BAL': 'balancer', 'YFI': 'yearn-finance',
+  'ENS': 'ethereum-name-service', 'GRT': 'the-graph', 'FIL': 'filecoin',
+  'AR': 'arweave', 'STORJ': 'storj', 'ANKR': 'ankr',
+  'OCEAN': 'ocean-protocol', 'RENDER': 'render-token', 'FET': 'fetch-ai',
+  'AGIX': 'singularitynet', 'RNDR': 'render-token', 'WLD': 'worldcoin-wld',
+  'PEPE': 'pepe', 'SHIB': 'shiba-inu', 'FLOKI': 'floki',
+  'BONK': 'bonk', 'WIF': 'dogwifcoin', 'BOME': 'book-of-meme',
+  'EOS': 'eos', 'TRX': 'tron', 'XTZ': 'tezos',
+  'HBAR': 'hedera-hashgraph', 'EGLD': 'elrond-erd-2', 'FLOW': 'flow',
+  'KLAY': 'klay-token', 'NEO': 'neo', 'QTUM': 'qtum',
+  'ZIL': 'zilliqa', 'WAVES': 'waves', 'IOTA': 'iota',
+  'XEM': 'nem', 'ZEC': 'zcash', 'DASH': 'dash',
+  'BTG': 'bitcoin-gold', 'XMR': 'monero', 'KSM': 'kusama',
+  'CAKE': 'pancakeswap-token', 'RUNE': 'thorchain', 'KAVA': 'kava',
+  'OSMO': 'osmosis', 'ROSE': 'oasis-network', 'CELO': 'celo',
+  'ONE': 'harmony', 'MINA': 'mina-protocol', 'ZEN': 'zencash',
+  'ICX': 'icon', 'IOST': 'iostoken', 'ONT': 'ontology',
+  'THETA': 'theta-token', 'ENJ': 'enjincoin', 'CHZ': 'chiliz',
+  'GMT': 'stepn', 'APE': 'apecoin', 'IMX': 'immutable-x',
+  'BLUR': 'blur', 'MAGIC': 'magic', 'GALA': 'gala',
+  'ILV': 'illuvium', 'JASMY': 'jasmycoin', 'MASK': 'mask-network',
+};
+
+// CoinGecko 가격 캐시 (API 호출 최소화)
+let coinGeckoCache = {};
+let coinGeckoCacheTime = 0;
+const COINGECKO_CACHE_DURATION = 60 * 1000; // 1분 캐시
+
+const fetchCoinGeckoPrice = async (symbol) => {
+  const coinId = COINGECKO_IDS[symbol];
+  if (!coinId) return null;
+  
+  const now = Date.now();
+  
+  // 캐시 확인
+  if (coinGeckoCache[symbol] && (now - coinGeckoCacheTime) < COINGECKO_CACHE_DURATION) {
+    return coinGeckoCache[symbol];
+  }
+  
+  try {
+    const response = await fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd&include_24hr_change=true`,
+      { headers: { 'Accept': 'application/json' } }
+    );
+    
+    if (!response.ok) return null;
+    
+    const data = await response.json();
+    if (data[coinId]) {
+      const result = {
+        price: data[coinId].usd,
+        change24h: data[coinId].usd_24h_change || 0
+      };
+      coinGeckoCache[symbol] = result;
+      coinGeckoCacheTime = now;
+      return result;
+    }
+    return null;
+  } catch (error) {
+    console.log(`CoinGecko 조회 실패 (${symbol}):`, error.message);
+    return null;
+  }
+};
+
+// 여러 코인 한번에 조회 (효율적)
+const fetchCoinGeckoPrices = async (symbols) => {
+  const coinIds = symbols
+    .map(s => COINGECKO_IDS[s])
+    .filter(id => id)
+    .join(',');
+  
+  if (!coinIds) return {};
+  
+  try {
+    const response = await fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds}&vs_currencies=usd&include_24hr_change=true`,
+      { headers: { 'Accept': 'application/json' } }
+    );
+    
+    if (!response.ok) return {};
+    
+    const data = await response.json();
+    const result = {};
+    
+    for (const symbol of symbols) {
+      const coinId = COINGECKO_IDS[symbol];
+      if (coinId && data[coinId]) {
+        result[symbol] = {
+          price: data[coinId].usd,
+          change24h: data[coinId].usd_24h_change || 0
+        };
+      }
+    }
+    
+    coinGeckoCache = { ...coinGeckoCache, ...result };
+    coinGeckoCacheTime = Date.now();
+    return result;
+  } catch (error) {
+    console.log('CoinGecko 일괄 조회 실패:', error.message);
+    return {};
+  }
+};
+
+// ============================================
+// 바이낸스 API 호출 (메인 분석용) - CoinGecko 폴백 포함
 // ============================================
 
 const fetchBinanceAPI = async (endpoint) => {
@@ -203,6 +325,47 @@ const fetchAllKRWMarkets = async () => {
     return krwMarkets;
   } catch (error) {
     console.error('업비트 마켓 조회 실패:', error.message);
+    return [];
+  }
+};
+
+// 업비트 호가창 조회 [신규]
+const fetchUpbitOrderBook = async (market) => {
+  try {
+    const endpoint = `/orderbook?markets=${market}`;
+    const data = await fetchUpbitAPI(endpoint);
+    
+    if (!data || data.length === 0) return null;
+    
+    const orderbook = data[0];
+    let totalBids = 0;
+    let totalAsks = 0;
+    
+    orderbook.orderbook_units.forEach(unit => {
+      totalBids += unit.bid_price * unit.bid_size;
+      totalAsks += unit.ask_price * unit.ask_size;
+    });
+    
+    const bidAskRatio = totalAsks > 0 ? totalBids / totalAsks : 1;
+    
+    return {
+      bidAskRatio,
+      totalBids,
+      totalAsks,
+      buyPressure: bidAskRatio > 1.2 ? 'strong' : bidAskRatio > 0.8 ? 'neutral' : 'weak'
+    };
+  } catch (error) {
+    return null;
+  }
+};
+
+// 업비트 일봉 조회 (멀티타임프레임용) [신규]
+const fetchUpbitDailyCandles = async (market, count = 30) => {
+  try {
+    const endpoint = `/candles/days?market=${market}&count=${count}`;
+    const data = await fetchUpbitAPI(endpoint);
+    return data.reverse();
+  } catch (error) {
     return [];
   }
 };
@@ -595,6 +758,7 @@ const analyzeMarket = async (market) => {
     
     let candles, binancePrice, binanceChange;
     let useBinance = hasBinanceData && config.USE_BINANCE_ANALYSIS !== false;
+    let dataSource = 'upbit';
     
     if (useBinance) {
       try {
@@ -603,14 +767,38 @@ const analyzeMarket = async (market) => {
         const binance24h = await fetchBinance24h(binanceSymbol);
         binancePrice = binance24h.price;
         binanceChange = binance24h.priceChangePercent;
+        dataSource = 'binance';
       } catch (e) {
-        // 바이낸스 실패 시 업비트로 폴백
+        // 바이낸스 실패 시 CoinGecko로 가격만 가져오기
+        console.log(`바이낸스 API 차단, CoinGecko 사용 (${coinSymbol})`);
+        try {
+          const geckoData = await fetchCoinGeckoPrice(coinSymbol);
+          if (geckoData) {
+            binancePrice = geckoData.price;
+            binanceChange = geckoData.change24h;
+            dataSource = 'coingecko';
+          }
+        } catch (e2) {
+          // CoinGecko도 실패
+        }
         useBinance = false;
+      }
+    } else {
+      // 바이낸스 비활성화 상태에서도 CoinGecko로 글로벌 가격 가져오기
+      try {
+        const geckoData = await fetchCoinGeckoPrice(coinSymbol);
+        if (geckoData) {
+          binancePrice = geckoData.price;
+          binanceChange = geckoData.change24h;
+          dataSource = 'coingecko';
+        }
+      } catch (e) {
+        // CoinGecko 실패
       }
     }
     
     if (!useBinance) {
-      // 업비트 데이터 사용 (폴백)
+      // 업비트 데이터 사용 (캔들 분석용)
       const endpoint = `/candles/minutes/${config.CANDLE_UNIT}?market=${market}&count=${config.CANDLE_COUNT}`;
       const upbitCandles = await fetchUpbitAPI(endpoint);
       candles = upbitCandles.reverse().map(c => ({
@@ -640,9 +828,10 @@ const analyzeMarket = async (market) => {
     // [신규] 멀티 타임프레임 분석 (일봉 대추세 확인)
     // ============================================
     let dailyTrend = { isBullish: true, ma20: null };
-    if (useBinance) {
+    if (config.USE_MULTI_TIMEFRAME !== false) {
       try {
-        const dailyCandles = await fetchBinanceCandles(binanceSymbol, '1d', 30);
+        // 업비트 일봉 사용
+        const dailyCandles = await fetchUpbitDailyCandles(market, 30);
         if (dailyCandles.length >= 20) {
           const dailyCloses = dailyCandles.map(c => c.trade_price);
           const dailyMa20 = calculateSMA(dailyCloses, 20);
@@ -660,7 +849,7 @@ const analyzeMarket = async (market) => {
     }
 
     // ============================================
-    // [신규] 펀딩비 분석 (선물 시장 심리)
+    // [신규] 펀딩비 분석 (선물 시장 심리) - 바이낸스 필요
     // ============================================
     let fundingData = null;
     let longShortData = null;
@@ -674,12 +863,12 @@ const analyzeMarket = async (market) => {
     }
 
     // ============================================
-    // [신규] 호가창 분석 (매수/매도 벽)
+    // [신규] 호가창 분석 (매수/매도 벽) - 업비트 사용
     // ============================================
     let orderBookData = null;
-    if (useBinance && config.USE_ORDERBOOK_ANALYSIS !== false) {
+    if (config.USE_ORDERBOOK_ANALYSIS !== false) {
       try {
-        orderBookData = await fetchOrderBook(binanceSymbol, 20);
+        orderBookData = await fetchUpbitOrderBook(market);
       } catch (e) {
         // 호가창 조회 실패해도 계속 진행
       }
@@ -692,11 +881,12 @@ const analyzeMarket = async (market) => {
       upbitPrice = upbitTicker.trade_price;
       upbitChange = upbitTicker.signed_change_rate * 100;
       
-      // 김치 프리미엄 계산 (바이낸스 데이터 있을 때만)
-      if (useBinance && binancePrice) {
+      // 김치 프리미엄 계산 (글로벌 가격 있을 때)
+      // 바이낸스 또는 CoinGecko에서 가져온 USD 가격 사용
+      if (binancePrice && config.SHOW_KIMCHI_PREMIUM !== false) {
         const exchangeRate = await fetchUSDKRWRate();
-        const binancePriceKRW = binancePrice * exchangeRate;
-        kimchiPremium = ((upbitPrice - binancePriceKRW) / binancePriceKRW * 100).toFixed(2);
+        const globalPriceKRW = binancePrice * exchangeRate;
+        kimchiPremium = ((upbitPrice - globalPriceKRW) / globalPriceKRW * 100).toFixed(2);
       }
     } catch (e) {
       console.log(`⚠️ ${market}: 업비트 가격 조회 실패`);
@@ -992,11 +1182,11 @@ const analyzeMarket = async (market) => {
 
     return {
       market,
-      // 분석 기준 (바이낸스 또는 업비트)
-      analysisSource: useBinance ? 'binance' : 'upbit',
-      binanceSymbol: useBinance ? binanceSymbol : null,
+      // 분석 기준 (binance, coingecko, upbit)
+      analysisSource: dataSource,
+      binanceSymbol: binanceSymbol,
       
-      // 바이낸스 가격 (USD)
+      // 글로벌 가격 (USD) - 바이낸스 또는 CoinGecko
       binancePrice: binancePrice || null,
       binanceChange: binanceChange || null,
       
