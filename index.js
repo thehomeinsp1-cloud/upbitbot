@@ -61,10 +61,10 @@ const initializeCoins = async () => {
   return watchCoins;
 };
 
-// 단일 코인 분석 및 알림
-const analyzeAndAlert = async (market) => {
+// 단일 코인 분석 및 알림 (멀티 스타일 지원)
+const analyzeAndAlert = async (market, styleKey = null, styleConfig = null) => {
   try {
-    const analysis = await analyzeMarket(market);
+    const analysis = await analyzeMarket(market, styleConfig);
     if (!analysis) return null;
 
     const coinName = market.replace('KRW-', '');
@@ -74,7 +74,7 @@ const analyzeAndAlert = async (market) => {
     let newsData = { score: 0, sentiment: 'neutral', news: [] };
     
     // 기술적 점수가 60점 이상인 코인만 뉴스 체크 (API 호출 최적화)
-    if (technicalScore >= 60 && config.USE_NEWS_ANALYSIS) {
+    if (technicalScore >= 60 && config.USE_NEWS_ANALYSIS && !styleKey) {
       newsData = await fetchCoinNews(market, 3);
       await sleep(300); // API 속도 제한
     }
@@ -87,20 +87,25 @@ const analyzeAndAlert = async (market) => {
     analysis.newsData = newsData;
     analysis.technicalScore = technicalScore;
     analysis.finalScore = finalScore.toFixed(0);
-    analysis.scorePercent = finalScore.toFixed(0); // 최종 점수로 업데이트
+    analysis.scorePercent = finalScore.toFixed(0);
+    analysis.styleKey = styleKey;
 
-    // 강력 매수 신호 (설정 점수 이상)
-    if (finalScore >= config.ALERT_THRESHOLD) {
-      const lastAlert = lastAlerts[market];
+    // 스타일별 알림 기준 적용
+    const alertThreshold = styleConfig?.alert_threshold || config.ALERT_THRESHOLD;
+    const cooldown = styleConfig?.cooldown || config.ALERT_COOLDOWN;
+    const alertKey = styleKey ? `${market}_${styleKey}` : market;
+
+    // 강력 매수 신호
+    if (finalScore >= alertThreshold) {
+      const lastAlert = lastAlerts[alertKey];
       const now = Date.now();
       
-      // 같은 코인 알림은 설정된 시간에 1번만
-      if (!lastAlert || (now - lastAlert) > config.ALERT_COOLDOWN) {
-        lastAlerts[market] = now;
+      if (!lastAlert || (now - lastAlert) > cooldown) {
+        lastAlerts[alertKey] = now;
         
         const message = formatAlertMessage(analysis);
         await sendTelegramAlert(message);
-        log(`🚨 ${coinName} 강력 매수 신호 발송! (최종: ${finalScore.toFixed(0)}점, 기술: ${technicalScore}점, 뉴스: ${newsData.score > 0 ? '+' : ''}${newsData.score})`);
+        log(`🚨 ${styleConfig?.name || ''} ${coinName} 강력 매수 신호 발송! (최종: ${finalScore.toFixed(0)}점)`);
       }
     }
 
@@ -111,13 +116,15 @@ const analyzeAndAlert = async (market) => {
   }
 };
 
-// 알림 메시지 포맷 (바이낸스 기준 + 업비트 가격 + 손절가)
+// 알림 메시지 포맷 (멀티 스타일 지원)
 const formatAlertMessage = (analysis) => {
   const coinName = analysis.market.replace('KRW-', '');
   const priceFormatted = analysis.currentPrice?.toLocaleString() || 'N/A';
   const changeIcon = analysis.priceChange >= 0 ? '📈' : '📉';
   
-  let message = `🚀 *${coinName} 강력 매수 신호!*\n\n`;
+  // 스타일 표시
+  const styleName = analysis.tradingStyle || '⚡ 단타';
+  let message = `🚀 *${coinName} ${styleName} 매수 신호!*\n\n`;
   
   // 분석 소스 표시 (바이낸스 또는 CoinGecko)
   if (analysis.analysisSource === 'binance') {
@@ -141,15 +148,15 @@ const formatAlertMessage = (analysis) => {
   message += '\n';
   
   // ============================================
-  // [신규] 손절가 & 목표가 (핵심!)
+  // 손절가 & 목표가 (스타일별)
   // ============================================
   if (analysis.stopLoss) {
     const sl = analysis.stopLoss;
     message += `🛡️ *매매 전략:*\n`;
     message += `• 진입가: ${sl.entryPrice?.toLocaleString()}원\n`;
-    message += `• 🔴 손절가: ${sl.stopLossPrice?.toLocaleString()}원 (-${sl.stopLossPercent}%)\n`;
-    message += `• 🟢 1차 목표: ${sl.targetPrice1?.toLocaleString()}원\n`;
-    message += `• 🟢 2차 목표: ${sl.targetPrice2?.toLocaleString()}원\n`;
+    message += `• 🔴 손절가: ${Math.round(sl.stopLossPrice)?.toLocaleString()}원 (-${sl.stopLossPercent}%)\n`;
+    message += `• 🟢 1차 목표: ${Math.round(sl.targetPrice1)?.toLocaleString()}원\n`;
+    message += `• 🟢 2차 목표: ${Math.round(sl.targetPrice2)?.toLocaleString()}원\n`;
     message += `• 리스크:리워드 = ${sl.riskRewardRatio}\n\n`;
   }
   
@@ -229,13 +236,37 @@ const runFullAnalysis = async () => {
 
   const results = [];
   
-  for (const market of watchCoins) {
-    const analysis = await analyzeAndAlert(market);
-    if (analysis) {
-      results.push(analysis);
+  // 멀티 스타일 분석 모드
+  if (config.MULTI_STYLE_ANALYSIS && config.TRADING_STYLES) {
+    const styles = config.TRADING_STYLES;
+    
+    for (const [styleKey, styleConfig] of Object.entries(styles)) {
+      if (!styleConfig.enabled) continue;
+      
+      log(`\n📈 ${styleConfig.name} 분석 시작...`);
+      
+      for (const market of watchCoins) {
+        const analysis = await analyzeAndAlert(market, styleKey, styleConfig);
+        if (analysis && styleKey === 'daytrading') {
+          // 단타 결과만 리포트용으로 저장
+          results.push(analysis);
+        }
+        // API 속도 제한 방지
+        await sleep(400);
+      }
+      
+      // 스타일 간 휴식
+      await sleep(1000);
     }
-    // API 속도 제한 방지 (업비트 초당 10회 제한 고려)
-    await sleep(350);
+  } else {
+    // 기본 분석 (단타)
+    for (const market of watchCoins) {
+      const analysis = await analyzeAndAlert(market);
+      if (analysis) {
+        results.push(analysis);
+      }
+      await sleep(350);
+    }
   }
 
   // 점수순 정렬
@@ -245,7 +276,7 @@ const runFullAnalysis = async () => {
   log(`\n📈 분석 결과 (상위 5개):`);
   results.slice(0, 5).forEach((r, i) => {
     const icon = r.scorePercent >= 75 ? '🟢' : r.scorePercent >= 60 ? '🟡' : '⚪';
-    log(`  ${i + 1}. ${icon} ${r.market.replace('KRW-', '')}: ${r.scorePercent}점 (₩${r.currentPrice.toLocaleString()})`);
+    log(`  ${i + 1}. ${icon} ${r.market.replace('KRW-', '')}: ${r.scorePercent}점 (₩${r.currentPrice?.toLocaleString() || 'N/A'})`);
   });
 
   // 정기 리포트 (설정된 경우)
@@ -306,27 +337,35 @@ const sendStartupMessage = async () => {
     : watchCoins.map(c => c.replace('KRW-', '')).join(', ');
     
   const newsStatus = config.USE_NEWS_ANALYSIS ? '✅' : '❌';
-  const orderbookStatus = config.USE_ORDERBOOK_ANALYSIS ? '✅' : '❌';
-  const coingeckoStatus = config.USE_COINGECKO ? '✅' : '❌';
+  const multiStyleStatus = config.MULTI_STYLE_ANALYSIS ? '✅' : '❌';
+  
+  // 활성화된 스타일 목록
+  let stylesText = '';
+  if (config.MULTI_STYLE_ANALYSIS && config.TRADING_STYLES) {
+    const activeStyles = Object.entries(config.TRADING_STYLES)
+      .filter(([k, v]) => v.enabled)
+      .map(([k, v]) => v.name);
+    stylesText = activeStyles.join(', ');
+  }
     
-  const message = `🤖 *암호화폐 신호 봇 v4.0 시작!*\n\n` +
+  const message = `🤖 *암호화폐 신호 봇 v5.0 시작!*\n\n` +
     `📌 모니터링: ${watchCoins.length}개 코인\n` +
-    `⏱ 분석 주기: ${config.ANALYSIS_INTERVAL / 60000}분\n` +
-    `🎯 알림 기준: ${config.ALERT_THRESHOLD}점 이상\n\n` +
-    `🌐 *글로벌 가격:*\n` +
-    `• CoinGecko API ${coingeckoStatus}\n` +
-    `• 김치 프리미엄 ✅\n\n` +
-    `📊 *분석 기능:*\n` +
-    `• 멀티타임프레임 (일봉) ✅\n` +
-    `• 호가창 분석 ${orderbookStatus}\n` +
-    `• OBV (세력 매집) ✅\n\n` +
-    `📈 *기술적 지표 (10종):*\n` +
-    `• RSI, MFI, OBV, ADX\n` +
-    `• MACD, 볼린저, MA, Stoch\n` +
-    `• 거래량, 호가창\n\n` +
+    `⏱ 분석 주기: ${config.ANALYSIS_INTERVAL / 60000}분\n\n` +
+    `🎯 *멀티 스타일 분석 ${multiStyleStatus}*\n` +
+    `${stylesText}\n\n` +
+    `📊 *스타일별 설정:*\n` +
+    `• 🔥 스캘핑: 15분봉, 손절 2%\n` +
+    `• ⚡ 단타: 1시간봉, 손절 4%\n` +
+    `• 📈 스윙: 4시간봉, 손절 7%\n` +
+    `• 🏦 장기: 일봉, 손절 12%\n\n` +
+    `📈 *분석 기능:*\n` +
+    `• 10종 기술적 지표\n` +
+    `• OBV 세력 매집 ✅\n` +
+    `• 호가창 수급 ✅\n` +
+    `• 일봉 추세 필터 ✅\n\n` +
     `🛡️ *리스크 관리:*\n` +
     `• ATR 손절가 자동 계산\n` +
-    `• 목표가 (1:2) 제공\n\n` +
+    `• 스타일별 목표가 제공\n\n` +
     `📰 뉴스 감성: ${newsStatus}\n` +
     `🖥 서버: Render.com (24시간)\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;

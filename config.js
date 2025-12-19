@@ -41,6 +41,66 @@ module.exports = {
   ALERT_COOLDOWN: 30 * 60 * 1000,
 
   // ============================================
+  // 📊 멀티 스타일 트레이딩 설정
+  // ============================================
+  
+  MULTI_STYLE_ANALYSIS: true,  // 4가지 스타일 동시 분석
+  
+  TRADING_STYLES: {
+    // 🔥 스캘핑 (몇 분 ~ 몇 시간)
+    scalping: {
+      enabled: true,
+      name: '🔥 스캘핑',
+      candle_unit: 15,        // 15분봉
+      candle_count: 100,
+      alert_threshold: 80,    // 높은 기준 (정확도)
+      stop_loss_percent: 2,
+      target_percent: 3,
+      atr_multiplier: 1.5,
+      cooldown: 15 * 60 * 1000,  // 15분
+    },
+    
+    // ⚡ 단타 (몇 시간 ~ 1일)
+    daytrading: {
+      enabled: true,
+      name: '⚡ 단타',
+      candle_unit: 60,        // 1시간봉
+      candle_count: 100,
+      alert_threshold: 78,
+      stop_loss_percent: 4,
+      target_percent: 8,
+      atr_multiplier: 2,
+      cooldown: 30 * 60 * 1000,  // 30분
+    },
+    
+    // 📈 스윙 (며칠 ~ 몇 주)
+    swing: {
+      enabled: true,
+      name: '📈 스윙',
+      candle_unit: 240,       // 4시간봉
+      candle_count: 100,
+      alert_threshold: 75,
+      stop_loss_percent: 7,
+      target_percent: 15,
+      atr_multiplier: 2.5,
+      cooldown: 2 * 60 * 60 * 1000,  // 2시간
+    },
+    
+    // 🏦 장기 (몇 주 ~ 몇 달)
+    longterm: {
+      enabled: true,
+      name: '🏦 장기',
+      candle_unit: 'day',     // 일봉
+      candle_count: 100,
+      alert_threshold: 75,
+      stop_loss_percent: 12,
+      target_percent: 30,
+      atr_multiplier: 3,
+      cooldown: 6 * 60 * 60 * 1000,  // 6시간
+    },
+  },
+
+  // ============================================
   // 📰 뉴스 분석 설정
   // ============================================
   

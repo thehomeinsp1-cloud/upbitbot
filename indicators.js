@@ -573,34 +573,47 @@ const calculateATR = (highs, lows, closes, period = 14) => {
   };
 };
 
-// 손절가 계산 함수 [신규]
-const calculateStopLoss = (entryPrice, atrData, config) => {
-  const stopType = config.STOP_LOSS_TYPE || 'atr';
+// 손절가 계산 함수 (스타일별 지원)
+const calculateStopLoss = (entryPrice, atrData, configOrStyle, styleOverrides = null) => {
+  // 스타일 오버라이드가 있으면 사용
+  const stopLossPercent = styleOverrides?.stop_loss_percent || configOrStyle.STOP_LOSS_PERCENT;
+  const targetPercent = styleOverrides?.target_percent || null;
+  const atrMultiplier = styleOverrides?.atr_multiplier || configOrStyle.ATR_STOP_MULTIPLIER || 2;
+  const stopType = configOrStyle.STOP_LOSS_TYPE || 'atr';
   
-  let stopLossPrice, stopLossPercent;
+  let stopPrice, slPercent;
   
-  if (stopType === 'percent') {
-    // 고정 퍼센트 방식
-    stopLossPercent = config.STOP_LOSS_PERCENT || 3;
-    stopLossPrice = entryPrice * (1 - stopLossPercent / 100);
+  if (stopLossPercent && stopType === 'percent') {
+    // 고정 퍼센트 방식 (스타일에서 지정)
+    slPercent = stopLossPercent;
+    stopPrice = entryPrice * (1 - slPercent / 100);
   } else {
     // ATR 기반 방식 (권장)
-    const multiplier = config.ATR_STOP_MULTIPLIER || 2;
     const atr = atrData?.atr || entryPrice * 0.02;
-    stopLossPrice = entryPrice - (atr * multiplier);
-    stopLossPercent = ((entryPrice - stopLossPrice) / entryPrice * 100);
+    stopPrice = entryPrice - (atr * atrMultiplier);
+    slPercent = ((entryPrice - stopPrice) / entryPrice * 100);
   }
   
-  // 목표가 계산 (리스크:리워드 = 1:2)
-  const riskAmount = entryPrice - stopLossPrice;
-  const targetPrice1 = entryPrice + (riskAmount * 1.5); // 1차 목표 (1:1.5)
-  const targetPrice2 = entryPrice + (riskAmount * 2);   // 2차 목표 (1:2)
-  const targetPrice3 = entryPrice + (riskAmount * 3);   // 3차 목표 (1:3)
+  // 목표가 계산
+  let targetPrice1, targetPrice2, targetPrice3;
+  
+  if (targetPercent) {
+    // 스타일에서 지정한 목표 퍼센트 사용
+    targetPrice1 = entryPrice * (1 + targetPercent / 100 * 0.5);  // 50%
+    targetPrice2 = entryPrice * (1 + targetPercent / 100);        // 100%
+    targetPrice3 = entryPrice * (1 + targetPercent / 100 * 1.5);  // 150%
+  } else {
+    // 리스크:리워드 비율 사용
+    const riskAmount = entryPrice - stopPrice;
+    targetPrice1 = entryPrice + (riskAmount * 1.5);
+    targetPrice2 = entryPrice + (riskAmount * 2);
+    targetPrice3 = entryPrice + (riskAmount * 3);
+  }
   
   return {
     entryPrice: entryPrice,
-    stopLossPrice: stopLossPrice,
-    stopLossPercent: stopLossPercent.toFixed(2),
+    stopLossPrice: stopPrice,
+    stopLossPercent: slPercent.toFixed(2),
     targetPrice1: targetPrice1,
     targetPrice2: targetPrice2,
     targetPrice3: targetPrice3,
@@ -744,13 +757,21 @@ const calculateStochastic = (highs, lows, closes, period = 14) => {
 };
 
 // ============================================
-// 종합 분석 함수 (바이낸스 기준 + 업비트 가격)
+// 종합 분석 함수 (멀티 스타일 지원)
 // ============================================
 
-const analyzeMarket = async (market) => {
+const analyzeMarket = async (market, styleConfig = null) => {
   try {
     const coinSymbol = market.replace('KRW-', '');
     const binanceSymbol = `${coinSymbol}USDT`;
+    
+    // 스타일 설정 (없으면 기본값)
+    const candleUnit = styleConfig?.candle_unit || config.CANDLE_UNIT;
+    const candleCount = styleConfig?.candle_count || config.CANDLE_COUNT;
+    const styleName = styleConfig?.name || '기본';
+    const stopLossPercent = styleConfig?.stop_loss_percent || null;
+    const targetPercent = styleConfig?.target_percent || null;
+    const atrMultiplier = styleConfig?.atr_multiplier || config.ATR_STOP_MULTIPLIER;
     
     // 바이낸스 심볼 존재 확인
     const binanceSymbols = await getBinanceSymbols();
@@ -763,7 +784,7 @@ const analyzeMarket = async (market) => {
     if (useBinance) {
       try {
         // 바이낸스 데이터 사용
-        candles = await fetchBinanceCandles(binanceSymbol, '1h', config.CANDLE_COUNT);
+        candles = await fetchBinanceCandles(binanceSymbol, '1h', candleCount);
         const binance24h = await fetchBinance24h(binanceSymbol);
         binancePrice = binance24h.price;
         binanceChange = binance24h.priceChangePercent;
@@ -799,7 +820,12 @@ const analyzeMarket = async (market) => {
     
     if (!useBinance) {
       // 업비트 데이터 사용 (캔들 분석용)
-      const endpoint = `/candles/minutes/${config.CANDLE_UNIT}?market=${market}&count=${config.CANDLE_COUNT}`;
+      let endpoint;
+      if (candleUnit === 'day') {
+        endpoint = `/candles/days?market=${market}&count=${candleCount}`;
+      } else {
+        endpoint = `/candles/minutes/${candleUnit}?market=${market}&count=${candleCount}`;
+      }
       const upbitCandles = await fetchUpbitAPI(endpoint);
       candles = upbitCandles.reverse().map(c => ({
         trade_price: c.trade_price,
@@ -911,12 +937,17 @@ const analyzeMarket = async (market) => {
     const currentVolume = volumes[volumes.length - 1];
     const volumeRatio = avgVolume ? currentVolume / avgVolume : 1;
 
-    // ATR 계산 (손절가용) [신규]
+    // ATR 계산 (손절가용)
     const atrData = calculateATR(highs, lows, closes, config.ATR_PERIOD || 14);
     
-    // 손절가 계산 [신규]
+    // 손절가 계산 (스타일 오버라이드 적용)
     const entryPrice = upbitPrice || currentAnalysisPrice;
-    const stopLossData = calculateStopLoss(entryPrice, atrData, config);
+    const styleOverrides = styleConfig ? {
+      stop_loss_percent: styleConfig.stop_loss_percent,
+      target_percent: styleConfig.target_percent,
+      atr_multiplier: styleConfig.atr_multiplier
+    } : null;
+    const stopLossData = calculateStopLoss(entryPrice, atrData, config, styleOverrides);
 
     // 추세 강도 판단 (ADX 기반)
     const adx = adxData?.adx || 0;
@@ -1182,6 +1213,9 @@ const analyzeMarket = async (market) => {
 
     return {
       market,
+      // 트레이딩 스타일
+      tradingStyle: styleName,
+      
       // 분석 기준 (binance, coingecko, upbit)
       analysisSource: dataSource,
       binanceSymbol: binanceSymbol,
