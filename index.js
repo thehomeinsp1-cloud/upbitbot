@@ -227,9 +227,14 @@ const formatAlertMessage = (analysis) => {
 };
 
 // 전체 시장 분석
+// 스타일별 마지막 분석 시간 추적
+const lastStyleAnalysis = {};
+
 const runFullAnalysis = async () => {
   analysisCount++;
   lastUpdate = new Date();
+  const now = Date.now();
+  
   log(`\n${'='.repeat(50)}`);
   log(`📊 분석 시작 (#${analysisCount}) - ${watchCoins.length}개 코인`);
   log(`${'='.repeat(50)}`);
@@ -243,20 +248,40 @@ const runFullAnalysis = async () => {
     for (const [styleKey, styleConfig] of Object.entries(styles)) {
       if (!styleConfig.enabled) continue;
       
-      log(`\n📈 ${styleConfig.name} 분석 시작...`);
+      // 스타일별 분석 주기 체크
+      const lastAnalysis = lastStyleAnalysis[styleKey] || 0;
+      const analysisInterval = styleConfig.analysis_interval || config.ANALYSIS_INTERVAL;
       
-      for (const market of watchCoins) {
-        const analysis = await analyzeAndAlert(market, styleKey, styleConfig);
-        if (analysis && styleKey === 'daytrading') {
-          // 단타 결과만 리포트용으로 저장
-          results.push(analysis);
-        }
-        // API 속도 제한 방지
-        await sleep(400);
+      if (now - lastAnalysis < analysisInterval) {
+        // 아직 분석 주기가 안 됐으면 스킵
+        const remainingMin = Math.round((analysisInterval - (now - lastAnalysis)) / 60000);
+        log(`⏭️ ${styleConfig.name} 스킵 (다음 분석까지 ${remainingMin}분)`);
+        continue;
       }
       
+      // 분석 시간 업데이트
+      lastStyleAnalysis[styleKey] = now;
+      log(`\n📈 ${styleConfig.name} 분석 시작...`);
+      
+      let styleSignalCount = 0;
+      for (const market of watchCoins) {
+        const analysis = await analyzeAndAlert(market, styleKey, styleConfig);
+        if (analysis) {
+          if (parseFloat(analysis.scorePercent) >= styleConfig.alert_threshold) {
+            styleSignalCount++;
+          }
+          if (styleKey === 'daytrading') {
+            results.push(analysis);
+          }
+        }
+        // API 속도 제한 방지
+        await sleep(300);
+      }
+      
+      log(`✅ ${styleConfig.name} 완료 (신호: ${styleSignalCount}개)`);
+      
       // 스타일 간 휴식
-      await sleep(1000);
+      await sleep(500);
     }
   } else {
     // 기본 분석 (단타)
@@ -273,11 +298,13 @@ const runFullAnalysis = async () => {
   results.sort((a, b) => parseFloat(b.scorePercent) - parseFloat(a.scorePercent));
 
   // 콘솔에 결과 출력
-  log(`\n📈 분석 결과 (상위 5개):`);
-  results.slice(0, 5).forEach((r, i) => {
-    const icon = r.scorePercent >= 75 ? '🟢' : r.scorePercent >= 60 ? '🟡' : '⚪';
-    log(`  ${i + 1}. ${icon} ${r.market.replace('KRW-', '')}: ${r.scorePercent}점 (₩${r.currentPrice?.toLocaleString() || 'N/A'})`);
-  });
+  if (results.length > 0) {
+    log(`\n📈 단타 분석 결과 (상위 5개):`);
+    results.slice(0, 5).forEach((r, i) => {
+      const icon = r.scorePercent >= 75 ? '🟢' : r.scorePercent >= 60 ? '🟡' : '⚪';
+      log(`  ${i + 1}. ${icon} ${r.market.replace('KRW-', '')}: ${r.scorePercent}점 (₩${r.currentPrice?.toLocaleString() || 'N/A'})`);
+    });
+  }
 
   // 정기 리포트 (설정된 경우)
   if (config.SEND_PERIODIC_REPORT && analysisCount % config.REPORT_INTERVAL === 0) {
@@ -338,26 +365,15 @@ const sendStartupMessage = async () => {
     
   const newsStatus = config.USE_NEWS_ANALYSIS ? '✅' : '❌';
   const multiStyleStatus = config.MULTI_STYLE_ANALYSIS ? '✅' : '❌';
-  
-  // 활성화된 스타일 목록
-  let stylesText = '';
-  if (config.MULTI_STYLE_ANALYSIS && config.TRADING_STYLES) {
-    const activeStyles = Object.entries(config.TRADING_STYLES)
-      .filter(([k, v]) => v.enabled)
-      .map(([k, v]) => v.name);
-    stylesText = activeStyles.join(', ');
-  }
     
   const message = `🤖 *암호화폐 신호 봇 v5.0 시작!*\n\n` +
-    `📌 모니터링: ${watchCoins.length}개 코인\n` +
-    `⏱ 분석 주기: ${config.ANALYSIS_INTERVAL / 60000}분\n\n` +
-    `🎯 *멀티 스타일 분석 ${multiStyleStatus}*\n` +
-    `${stylesText}\n\n` +
+    `📌 모니터링: ${watchCoins.length}개 코인\n\n` +
+    `🎯 *멀티 스타일 분석 ${multiStyleStatus}*\n\n` +
     `📊 *스타일별 설정:*\n` +
-    `• 🔥 스캘핑: 15분봉, 손절 2%\n` +
-    `• ⚡ 단타: 1시간봉, 손절 4%\n` +
-    `• 📈 스윙: 4시간봉, 손절 7%\n` +
-    `• 🏦 장기: 일봉, 손절 12%\n\n` +
+    `• 🔥 스캘핑: 15분봉, 5분마다\n` +
+    `• ⚡ 단타: 1시간봉, 15분마다\n` +
+    `• 📈 스윙: 4시간봉, 1시간마다\n` +
+    `• 🏦 장기: 일봉, 4시간마다\n\n` +
     `📈 *분석 기능:*\n` +
     `• 10종 기술적 지표\n` +
     `• OBV 세력 매집 ✅\n` +

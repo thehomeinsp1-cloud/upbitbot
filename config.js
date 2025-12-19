@@ -58,6 +58,7 @@ module.exports = {
       target_percent: 3,
       atr_multiplier: 1.5,
       cooldown: 15 * 60 * 1000,  // 15분
+      analysis_interval: 5 * 60 * 1000,  // 5분마다 분석
     },
     
     // ⚡ 단타 (몇 시간 ~ 1일)
@@ -71,6 +72,7 @@ module.exports = {
       target_percent: 8,
       atr_multiplier: 2,
       cooldown: 30 * 60 * 1000,  // 30분
+      analysis_interval: 15 * 60 * 1000,  // 15분마다 분석
     },
     
     // 📈 스윙 (며칠 ~ 몇 주)
@@ -84,6 +86,7 @@ module.exports = {
       target_percent: 15,
       atr_multiplier: 2.5,
       cooldown: 2 * 60 * 60 * 1000,  // 2시간
+      analysis_interval: 60 * 60 * 1000,  // 1시간마다 분석
     },
     
     // 🏦 장기 (몇 주 ~ 몇 달)
@@ -97,6 +100,7 @@ module.exports = {
       target_percent: 30,
       atr_multiplier: 3,
       cooldown: 6 * 60 * 60 * 1000,  // 6시간
+      analysis_interval: 4 * 60 * 60 * 1000,  // 4시간마다 분석
     },
   },
 
