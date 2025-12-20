@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
-  "version": "5.0.0",
-  "description": "암호화폐 통합 매수 신호 알림 봇 - 멀티 스타일 트레이딩",
+  "version": "5.2.0",
+  "description": "암호화폐 통합 매수 신호 알림 봇 - 동적 가중치 + 거래대금 필터",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

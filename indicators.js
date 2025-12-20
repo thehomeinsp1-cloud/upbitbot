@@ -960,7 +960,33 @@ const analyzeMarket = async (market, styleConfig = null) => {
     // 신호 분석 및 점수 계산
     const signals = [];
     let totalScore = 0;
-    const weights = config.INDICATOR_WEIGHTS;
+    let weights = { ...config.INDICATOR_WEIGHTS };
+    
+    // ============================================
+    // [신규] 동적 가중치 (ADX 기반)
+    // ============================================
+    if (config.USE_DYNAMIC_WEIGHTS) {
+      if (adx > 25) {
+        // 추세장: MACD, MA 가중치 증가 / RSI, Stoch 감소
+        weights = {
+          ...weights,
+          MACD: weights.MACD * 1.5,
+          MA: weights.MA * 1.3,
+          RSI: weights.RSI * 0.7,
+          STOCHASTIC: weights.STOCHASTIC * 0.7,
+        };
+      } else if (adx < 20) {
+        // 횡보장: RSI, Stoch 가중치 증가 / MACD, MA 감소
+        weights = {
+          ...weights,
+          RSI: weights.RSI * 1.5,
+          STOCHASTIC: weights.STOCHASTIC * 1.5,
+          MFI: weights.MFI * 1.3,
+          MACD: weights.MACD * 0.7,
+          MA: weights.MA * 0.7,
+        };
+      }
+    }
     
     // ============================================
     // [신규] 멀티타임프레임 필터 (일봉 기반)

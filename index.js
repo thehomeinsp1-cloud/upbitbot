@@ -48,12 +48,41 @@ const log = (message) => {
   console.log(`[${now}] ${message}`);
 };
 
-// 코인 목록 초기화
+// 코인 목록 초기화 (거래대금 필터 포함)
 const initializeCoins = async () => {
   if (config.USE_ALL_COINS) {
     log('📡 업비트 전체 KRW 코인 목록 가져오는 중...');
-    watchCoins = await fetchAllKRWMarkets();
-    log(`✅ 총 ${watchCoins.length}개 코인 로드 완료!`);
+    let allCoins = await fetchAllKRWMarkets();
+    log(`📊 총 ${allCoins.length}개 코인 발견`);
+    
+    // 거래대금 필터 적용
+    if (config.USE_VOLUME_FILTER && config.MIN_TRADING_VALUE) {
+      log(`💰 거래대금 ${config.MIN_TRADING_VALUE}억 이상 필터링 중...`);
+      
+      try {
+        // 모든 코인의 티커 정보 한 번에 가져오기
+        const markets = allCoins.join(',');
+        const response = await fetch(`https://api.upbit.com/v1/ticker?markets=${markets}`);
+        const tickers = await response.json();
+        
+        // 거래대금 기준 필터링 (억원 단위)
+        const minValue = config.MIN_TRADING_VALUE * 100000000; // 억 → 원
+        const filteredCoins = tickers
+          .filter(t => t.acc_trade_price_24h >= minValue)
+          .sort((a, b) => b.acc_trade_price_24h - a.acc_trade_price_24h)
+          .map(t => t.market);
+        
+        log(`✅ 거래대금 필터 적용: ${allCoins.length}개 → ${filteredCoins.length}개`);
+        watchCoins = filteredCoins;
+      } catch (error) {
+        log(`⚠️ 거래대금 필터 실패, 전체 코인 사용: ${error.message}`);
+        watchCoins = allCoins;
+      }
+    } else {
+      watchCoins = allCoins;
+    }
+    
+    log(`✅ 총 ${watchCoins.length}개 코인 모니터링!`);
   } else {
     watchCoins = config.WATCH_COINS;
     log(`📌 설정된 ${watchCoins.length}개 코인 모니터링`);
@@ -104,7 +133,7 @@ const analyzeAndAlert = async (market, styleKey = null, styleConfig = null) => {
         lastAlerts[alertKey] = now;
         
         const message = formatAlertMessage(analysis);
-        await sendTelegramAlert(message);
+        await sendTelegramAlert(message, coinName);  // 인라인 버튼용 코인 심볼 전달
         log(`🚨 ${styleConfig?.name || ''} ${coinName} 강력 매수 신호 발송! (최종: ${finalScore.toFixed(0)}점)`);
       }
     }
@@ -218,6 +247,14 @@ const formatAlertMessage = (analysis) => {
     analysis.newsData.news.slice(0, 2).forEach(news => {
       const title = news.title.length > 35 ? news.title.substring(0, 35) + '...' : news.title;
       message += `${news.sentiment} ${title}\n`;
+    });
+  }
+  
+  // 코인니스 한국 뉴스 추가
+  if (analysis.newsData && analysis.newsData.koNews && analysis.newsData.koNews.length > 0) {
+    message += `\n🇰🇷 *코인니스:*\n`;
+    analysis.newsData.koNews.slice(0, 2).forEach(news => {
+      message += `${news.sentiment} ${news.text}\n`;
     });
   }
   
@@ -363,26 +400,26 @@ const sendStartupMessage = async () => {
     ? `${watchCoins.slice(0, 10).map(c => c.replace('KRW-', '')).join(', ')} 외 ${watchCoins.length - 10}개`
     : watchCoins.map(c => c.replace('KRW-', '')).join(', ');
     
-  const newsStatus = config.USE_NEWS_ANALYSIS ? '✅' : '❌';
   const multiStyleStatus = config.MULTI_STYLE_ANALYSIS ? '✅' : '❌';
+  const volumeFilterStatus = config.USE_VOLUME_FILTER ? `✅ (${config.MIN_TRADING_VALUE}억+)` : '❌';
+  const dynamicWeightStatus = config.USE_DYNAMIC_WEIGHTS ? '✅' : '❌';
     
-  const message = `🤖 *암호화폐 신호 봇 v5.0 시작!*\n\n` +
-    `📌 모니터링: ${watchCoins.length}개 코인\n\n` +
-    `🎯 *멀티 스타일 분석 ${multiStyleStatus}*\n\n` +
-    `📊 *스타일별 설정:*\n` +
-    `• 🔥 스캘핑: 15분봉, 5분마다\n` +
-    `• ⚡ 단타: 1시간봉, 15분마다\n` +
-    `• 📈 스윙: 4시간봉, 1시간마다\n` +
-    `• 🏦 장기: 일봉, 4시간마다\n\n` +
-    `📈 *분석 기능:*\n` +
-    `• 10종 기술적 지표\n` +
-    `• OBV 세력 매집 ✅\n` +
-    `• 호가창 수급 ✅\n` +
-    `• 일봉 추세 필터 ✅\n\n` +
+  const message = `🤖 *암호화폐 신호 봇 v5.2 시작!*\n\n` +
+    `📌 모니터링: ${watchCoins.length}개 코인\n` +
+    `💰 거래대금 필터: ${volumeFilterStatus}\n\n` +
+    `🎯 *멀티 스타일 분석 ${multiStyleStatus}*\n` +
+    `• 🔥 스캘핑 → ⚡ 단타 → 📈 스윙 → 🏦 장기\n\n` +
+    `🆕 *v5.2 신규 기능:*\n` +
+    `• 동적 가중치 ${dynamicWeightStatus}\n` +
+    `• 거래대금 필터 ${volumeFilterStatus}\n` +
+    `• 인라인 버튼 (업비트/차트)\n` +
+    `• ATR 배수 2.5 (변동성 대응)\n\n` +
+    `📰 *뉴스 분석:*\n` +
+    `• CryptoPanic (글로벌) ✅\n` +
+    `• 코인니스 (한국) ✅\n\n` +
     `🛡️ *리스크 관리:*\n` +
     `• ATR 손절가 자동 계산\n` +
     `• 스타일별 목표가 제공\n\n` +
-    `📰 뉴스 감성: ${newsStatus}\n` +
     `🖥 서버: Render.com (24시간)\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
   
