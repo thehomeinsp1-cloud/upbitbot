@@ -559,6 +559,26 @@ const monitorPositions = async () => {
       }
       
       // ============================================
+      // 1.5️⃣ 목표가 도달 시 전량 익절! (신규)
+      // ============================================
+      if (currentPrice >= position.takeProfit) {
+        console.log(`   🎯 ${position.coinName} 목표가 도달! 전량 익절`);
+        await executeSell(market, `목표가 익절 (+${pnlPercent.toFixed(1)}%)`, currentPrice);
+        continue;
+      }
+      
+      // ============================================
+      // 1.6️⃣ 안전 익절 (7% 이상이면 무조건 50% 익절)
+      // ============================================
+      if (pnlPercent >= 7 && !position.safeProfitTaken) {
+        console.log(`   💰 ${position.coinName} 안전 익절! (+${pnlPercent.toFixed(1)}%)`);
+        position.safeProfitTaken = true;
+        savePositions();
+        await executePartialSell(market, 0.5, `안전 익절 50% (+${pnlPercent.toFixed(1)}%)`, currentPrice);
+        continue;
+      }
+      
+      // ============================================
       // 2️⃣ RSI 기반 부분 익절 (옵션 C 핵심!)
       // ============================================
       if (pnlPercent >= 5) {
