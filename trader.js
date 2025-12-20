@@ -1,17 +1,103 @@
 /**
  * 🤖 자동매매 트레이더 모듈
- * 매수/매도 결정 및 포지션 관리
+ * 매수/매도 결정 및 포지션 관리 + 영구 저장
  */
 
+const fs = require('fs');
+const path = require('path');
 const config = require('./config');
 const upbit = require('./upbit');
 const { sendTelegramMessage, sendTelegramMessageWithButtons } = require('./telegram');
 
 // ============================================
+// 💾 포지션 영구 저장 (서버 재시작 대비)
+// ============================================
+
+const POSITIONS_FILE = path.join(__dirname, 'positions.json');
+const TRADE_HISTORY_FILE = path.join(__dirname, 'trade_history.json');
+
+// 포지션 파일에서 로드
+const loadPositions = () => {
+  try {
+    if (fs.existsSync(POSITIONS_FILE)) {
+      const data = fs.readFileSync(POSITIONS_FILE, 'utf8');
+      const saved = JSON.parse(data);
+      
+      // Map으로 변환
+      Object.entries(saved.positions || {}).forEach(([key, value]) => {
+        // 날짜 문자열을 Date 객체로 복원
+        if (value.entryTime) value.entryTime = new Date(value.entryTime);
+        positions.set(key, value);
+      });
+      
+      // 일일 손익 복원
+      if (saved.dailyPnL !== undefined) dailyPnL = saved.dailyPnL;
+      if (saved.lastResetDate) lastResetDate = saved.lastResetDate;
+      
+      console.log(`📂 포지션 복원 완료: ${positions.size}개`);
+      positions.forEach((pos, market) => {
+        console.log(`   • ${pos.coinName}: ${pos.entryPrice.toLocaleString()}원 (${pos.investAmount.toLocaleString()}원)`);
+      });
+      
+      return true;
+    }
+  } catch (error) {
+    console.error('⚠️ 포지션 로드 실패:', error.message);
+  }
+  return false;
+};
+
+// 포지션 파일에 저장
+const savePositions = () => {
+  try {
+    const data = {
+      positions: Object.fromEntries(positions),
+      dailyPnL,
+      lastResetDate,
+      savedAt: new Date().toISOString()
+    };
+    
+    fs.writeFileSync(POSITIONS_FILE, JSON.stringify(data, null, 2));
+    console.log(`💾 포지션 저장 완료 (${positions.size}개)`);
+    return true;
+  } catch (error) {
+    console.error('❌ 포지션 저장 실패:', error.message);
+    return false;
+  }
+};
+
+// 매매 기록 저장
+const saveTradeHistory = () => {
+  try {
+    // 최근 100개만 저장
+    const recentHistory = tradeHistory.slice(-100);
+    fs.writeFileSync(TRADE_HISTORY_FILE, JSON.stringify(recentHistory, null, 2));
+    return true;
+  } catch (error) {
+    console.error('매매 기록 저장 실패:', error.message);
+    return false;
+  }
+};
+
+// 매매 기록 로드
+const loadTradeHistory = () => {
+  try {
+    if (fs.existsSync(TRADE_HISTORY_FILE)) {
+      const data = fs.readFileSync(TRADE_HISTORY_FILE, 'utf8');
+      const saved = JSON.parse(data);
+      tradeHistory.push(...saved);
+      console.log(`📂 매매 기록 복원: ${saved.length}건`);
+    }
+  } catch (error) {
+    console.error('매매 기록 로드 실패:', error.message);
+  }
+};
+
+// ============================================
 // 📊 포지션 관리
 // ============================================
 
-// 보유 포지션 (메모리)
+// 보유 포지션 (메모리 + 파일 동기화)
 const positions = new Map();
 
 // 매매 기록
@@ -100,17 +186,21 @@ const executeBuy = async (market, analysis) => {
     
     positions.set(market, position);
     
+    // 💾 포지션 파일에 즉시 저장 (서버 재시작 대비)
+    savePositions();
+    
     // 8. 쿨다운 설정
     buyCooldowns.set(market, Date.now());
     
-    // 8. 매매 기록
+    // 9. 매매 기록
     tradeHistory.push({
       type: 'BUY',
       ...position,
       timestamp: new Date(),
     });
+    saveTradeHistory();
 
-    // 9. 텔레그램 알림
+    // 10. 텔레그램 알림
     await sendBuyNotification(position, analysis);
     
     console.log(`✅ ${coinName} 매수 완료!`);
@@ -179,9 +269,13 @@ const executeSell = async (market, reason, currentPrice) => {
       timestamp: new Date(),
     };
     tradeHistory.push(trade);
+    saveTradeHistory();
     
     // 6. 포지션 삭제
     positions.delete(market);
+    
+    // 💾 포지션 파일에 즉시 저장 (서버 재시작 대비)
+    savePositions();
     
     // 7. 텔레그램 알림
     await sendSellNotification(trade);
@@ -412,6 +506,7 @@ const resetDaily = () => {
     console.log('🔄 일일 손익 초기화');
     dailyPnL = 0;
     lastResetDate = today;
+    savePositions(); // 일일 초기화 후 저장
   }
 };
 
@@ -429,12 +524,31 @@ const initialize = async () => {
     return false;
   }
   
-  console.log(`📋 설정:`);
+  // 💾 저장된 포지션 복원 (서버 재시작 대비)
+  console.log('\n📂 저장된 데이터 복원 중...');
+  loadPositions();
+  loadTradeHistory();
+  
+  // 복원된 포지션이 있으면 알림
+  if (positions.size > 0) {
+    const positionList = Array.from(positions.values())
+      .map(p => `• ${p.coinName}: ${p.entryPrice.toLocaleString()}원`)
+      .join('\n');
+    
+    await sendTelegramMessage(
+      `📂 *포지션 복원 완료!*\n\n` +
+      `보유 중인 포지션 ${positions.size}개:\n${positionList}\n\n` +
+      `💡 서버 재시작 후 자동 복원됨`
+    );
+  }
+  
+  console.log(`\n📋 설정:`);
   console.log(`   • 테스트 모드: ${tradeConfig.testMode ? '✅ ON' : '❌ OFF'}`);
   console.log(`   • 1회 매수: ${tradeConfig.maxInvestPerTrade.toLocaleString()}원`);
   console.log(`   • 최대 포지션: ${tradeConfig.maxPositions}개`);
   console.log(`   • 손절: -${tradeConfig.stopLossPercent}%`);
   console.log(`   • 익절: +${tradeConfig.takeProfitPercent}%`);
+  console.log(`   • 현재 보유: ${positions.size}개 포지션`);
   
   // API 연결 테스트
   if (!tradeConfig.testMode) {
@@ -463,4 +577,6 @@ module.exports = {
   getPositions,
   resetDaily,
   initialize,
+  loadPositions,
+  savePositions,
 };
