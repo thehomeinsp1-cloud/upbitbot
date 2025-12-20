@@ -1,6 +1,7 @@
 /**
  * 🤖 자동매매 트레이더 모듈
  * 매수/매도 결정 및 포지션 관리 + 영구 저장
+ * 옵션 C: 동적 익절 전략 (RSI 기반 부분 익절 + 트레일링)
  */
 
 const fs = require('fs');
@@ -8,6 +9,126 @@ const path = require('path');
 const config = require('./config');
 const upbit = require('./upbit');
 const { sendTelegramMessage, sendTelegramMessageWithButtons } = require('./telegram');
+
+// ============================================
+// 📊 RSI 계산 (동적 익절용)
+// ============================================
+
+const fetchRSI = async (market, period = 14) => {
+  try {
+    const response = await fetch(`https://api.upbit.com/v1/candles/minutes/60?market=${market}&count=${period + 10}`);
+    const candles = await response.json();
+    
+    if (!candles || candles.length < period + 1) return null;
+    
+    // 최신순 → 과거순으로 정렬
+    candles.reverse();
+    
+    let gains = 0;
+    let losses = 0;
+    
+    // 첫 번째 평균 계산
+    for (let i = 1; i <= period; i++) {
+      const change = candles[i].trade_price - candles[i - 1].trade_price;
+      if (change > 0) gains += change;
+      else losses += Math.abs(change);
+    }
+    
+    const avgGain = gains / period;
+    const avgLoss = losses / period;
+    
+    if (avgLoss === 0) return 100;
+    
+    const rs = avgGain / avgLoss;
+    const rsi = 100 - (100 / (1 + rs));
+    
+    return rsi;
+  } catch (error) {
+    console.error(`RSI 계산 실패 (${market}):`, error.message);
+    return null;
+  }
+};
+
+// ============================================
+// 📈 부분 매도 (동적 익절용)
+// ============================================
+
+const executePartialSell = async (market, sellRatio, reason, currentPrice) => {
+  const position = positions.get(market);
+  if (!position) return null;
+  
+  const coinName = position.coinName;
+  const sellQuantity = position.quantity * sellRatio;
+  const remainQuantity = position.quantity * (1 - sellRatio);
+  
+  try {
+    console.log(`\n${'='.repeat(40)}`);
+    console.log(`🟡 부분 매도 시작: ${coinName} (${(sellRatio * 100).toFixed(0)}%)`);
+    console.log(`   사유: ${reason}`);
+    console.log(`${'='.repeat(40)}`);
+
+    // 테스트 모드
+    if (position.testMode) {
+      console.log(`🧪 [테스트] 부분 매도 시뮬레이션`);
+    } else {
+      await upbit.sellMarket(market, sellQuantity);
+    }
+    
+    // 손익 계산 (부분)
+    const pnl = (currentPrice - position.entryPrice) * sellQuantity;
+    const pnlPercent = ((currentPrice / position.entryPrice) - 1) * 100;
+    
+    // 일일 손익 업데이트
+    dailyPnL += pnl;
+    
+    // 포지션 수량 업데이트 (남은 수량)
+    position.quantity = remainQuantity;
+    position.partialSellCount = (position.partialSellCount || 0) + 1;
+    position.realizedPnL = (position.realizedPnL || 0) + pnl;
+    
+    // 💾 포지션 저장
+    savePositions();
+    
+    // 매매 기록
+    tradeHistory.push({
+      type: 'PARTIAL_SELL',
+      market,
+      coinName,
+      sellRatio,
+      entryPrice: position.entryPrice,
+      exitPrice: currentPrice,
+      quantity: sellQuantity,
+      remainQuantity,
+      pnl,
+      pnlPercent,
+      reason,
+      testMode: position.testMode,
+      timestamp: new Date(),
+    });
+    saveTradeHistory();
+    
+    // 텔레그램 알림
+    const testTag = position.testMode ? '🧪 [테스트] ' : '';
+    await sendTelegramMessage(
+      `${testTag}🟡 *부분 익절 완료!*\n\n` +
+      `💰 *${coinName}* (${(sellRatio * 100).toFixed(0)}% 매도)\n\n` +
+      `📊 매도 정보:\n` +
+      `• 매도 비율: ${(sellRatio * 100).toFixed(0)}%\n` +
+      `• 매도가: ${currentPrice.toLocaleString()}원\n` +
+      `• 수익: +${pnlPercent.toFixed(1)}%\n\n` +
+      `📈 남은 포지션: ${(remainQuantity / (position.quantity + sellQuantity) * 100).toFixed(0)}%\n` +
+      `🎯 사유: ${reason}\n` +
+      `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`
+    );
+    
+    console.log(`✅ ${coinName} 부분 매도 완료! (${(sellRatio * 100).toFixed(0)}%, +${pnlPercent.toFixed(2)}%)`);
+    return { pnl, pnlPercent, remainQuantity };
+
+  } catch (error) {
+    console.error(`❌ ${coinName} 부분 매도 실패:`, error.message);
+    return null;
+  }
+};
 
 // ============================================
 // 💾 포지션 영구 저장 (서버 재시작 대비)
@@ -355,7 +476,7 @@ const checkBuyConditions = async (market, analysis) => {
 };
 
 // ============================================
-// 📊 포지션 모니터링 (손절/익절 체크)
+// 📊 포지션 모니터링 (동적 익절 - 옵션 C)
 // ============================================
 
 const monitorPositions = async () => {
@@ -372,34 +493,75 @@ const monitorPositions = async () => {
       const currentPrice = ticker.trade_price;
       const pnlPercent = ((currentPrice / position.entryPrice) - 1) * 100;
       
-      console.log(`   ${position.coinName}: ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}% (${currentPrice.toLocaleString()}원)`);
+      // 보유 시간 계산
+      const holdingHours = (Date.now() - new Date(position.entryTime).getTime()) / (1000 * 60 * 60);
       
-      // 1. 손절 체크
+      console.log(`   ${position.coinName}: ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}% (${currentPrice.toLocaleString()}원) [${holdingHours.toFixed(1)}시간]`);
+      
+      // ============================================
+      // 1️⃣ 손절 체크 (ATR 기반)
+      // ============================================
       if (currentPrice <= position.stopLoss) {
-        const lossPercent = ((position.stopLoss / position.entryPrice) - 1) * 100;
+        const lossPercent = ((currentPrice / position.entryPrice) - 1) * 100;
         console.log(`   🔴 ${position.coinName} 손절가 도달!`);
         await executeSell(market, `손절 (${lossPercent.toFixed(1)}%)`, currentPrice);
         continue;
       }
       
-      // 2. 고정 익절 체크 (트레일링 비활성 시)
-      if (!position.trailingActivated && currentPrice >= position.takeProfit) {
-        console.log(`   🟢 ${position.coinName} 익절가 도달!`);
-        await executeSell(market, `익절 (+${config.AUTO_TRADE.takeProfitPercent}%)`, currentPrice);
+      // ============================================
+      // 2️⃣ RSI 기반 부분 익절 (옵션 C 핵심!)
+      // ============================================
+      if (pnlPercent >= 5) {
+        const rsi = await fetchRSI(market);
+        
+        if (rsi !== null) {
+          console.log(`   📊 ${position.coinName} RSI: ${rsi.toFixed(1)}`);
+          
+          // 부분 익절 카운트 초기화
+          const partialSellCount = position.partialSellCount || 0;
+          
+          // RSI > 75: 1차 부분 익절 (30%)
+          if (rsi > 75 && partialSellCount === 0 && pnlPercent >= 5) {
+            console.log(`   🟡 ${position.coinName} RSI 과매수 1단계! (RSI: ${rsi.toFixed(1)})`);
+            await executePartialSell(market, 0.3, `RSI 과매수 1단계 (${rsi.toFixed(0)})`, currentPrice);
+            continue;
+          }
+          
+          // RSI > 80: 2차 부분 익절 (추가 30% = 전체의 42.9%)
+          if (rsi > 80 && partialSellCount === 1 && pnlPercent >= 7) {
+            console.log(`   🟡 ${position.coinName} RSI 과매수 2단계! (RSI: ${rsi.toFixed(1)})`);
+            await executePartialSell(market, 0.429, `RSI 과매수 2단계 (${rsi.toFixed(0)})`, currentPrice);
+            continue;
+          }
+          
+          // RSI > 85: 전량 익절 (극단적 과매수)
+          if (rsi > 85 && pnlPercent >= 10) {
+            console.log(`   🟢 ${position.coinName} RSI 극단적 과매수! 전량 익절`);
+            await executeSell(market, `RSI 극단 과매수 (${rsi.toFixed(0)})`, currentPrice);
+            continue;
+          }
+        }
+      }
+      
+      // ============================================
+      // 3️⃣ 시간 기반 익절 (24시간 보유 + 3% 이상)
+      // ============================================
+      if (holdingHours >= 24 && pnlPercent >= 3) {
+        console.log(`   ⏰ ${position.coinName} 24시간 보유 + 수익 → 익절`);
+        await executeSell(market, `시간 익절 (24h, +${pnlPercent.toFixed(1)}%)`, currentPrice);
         continue;
       }
       
-      // 3. ATR 기반 트레일링 스탑 로직
-      // - 5% 이상 수익: 트레일링 활성화 + 손절가를 본절로
-      // - 이후 고점 대비 ATR*2 하락 시 매도 (코인별 변동성 반영)
-      
-      // ATR 기반 트레일링 비율 (없으면 기본 3%)
+      // ============================================
+      // 4️⃣ 트레일링 스탑 (나머지 40%)
+      // ============================================
       const trailingPercent = position.trailingStopPercent || 3;
       
       if (pnlPercent >= 5) {
         // 최고가 갱신
         if (currentPrice > position.highPrice) {
           position.highPrice = currentPrice;
+          savePositions();
           console.log(`   📈 ${position.coinName} 최고가 갱신: ${currentPrice.toLocaleString()}원`);
         }
         
@@ -407,21 +569,26 @@ const monitorPositions = async () => {
         if (!position.trailingActivated) {
           position.trailingActivated = true;
           position.stopLoss = position.entryPrice; // 본절로 이동
+          savePositions();
           console.log(`   🎯 ${position.coinName} 트레일링 스탑 활성화! (ATR: ${trailingPercent.toFixed(1)}%)`);
         }
         
-        // 고점 대비 ATR*2 하락 시 매도 (코인별 변동성 반영)
+        // 고점 대비 ATR*2 하락 시 전량 매도
         const dropFromHigh = ((position.highPrice - currentPrice) / position.highPrice) * 100;
         if (dropFromHigh >= trailingPercent) {
           const finalPnl = ((currentPrice / position.entryPrice) - 1) * 100;
-          console.log(`   📉 ${position.coinName} 고점 대비 ${dropFromHigh.toFixed(1)}% 하락! (ATR 기준: ${trailingPercent.toFixed(1)}%)`);
+          console.log(`   📉 ${position.coinName} 고점 대비 ${dropFromHigh.toFixed(1)}% 하락!`);
           await executeSell(market, `트레일링 스탑 (+${finalPnl.toFixed(1)}%)`, currentPrice);
           continue;
         }
       }
-      // 3% 이상 수익 시 손절가를 본절로 (안전장치)
-      else if (pnlPercent >= 3 && position.stopLoss < position.entryPrice) {
+      
+      // ============================================
+      // 5️⃣ 본절 안전장치 (3% 수익 시)
+      // ============================================
+      if (pnlPercent >= 3 && position.stopLoss < position.entryPrice) {
         position.stopLoss = position.entryPrice;
+        savePositions();
         console.log(`   🛡️ ${position.coinName} 손절가 본절로 이동 (3% 수익 달성)`);
       }
       
@@ -430,7 +597,7 @@ const monitorPositions = async () => {
     }
     
     // API 속도 제한
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 300));
   }
 };
 
@@ -571,6 +738,7 @@ const initialize = async () => {
 module.exports = {
   executeBuy,
   executeSell,
+  executePartialSell,
   checkBuyConditions,
   monitorPositions,
   getStatus,
@@ -579,4 +747,5 @@ module.exports = {
   initialize,
   loadPositions,
   savePositions,
+  fetchRSI,
 };

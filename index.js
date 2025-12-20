@@ -512,21 +512,23 @@ const sendStartupMessage = async () => {
   const autoTradeStatus = autoTradeConfig.enabled ? '✅' : '❌';
   const testModeStatus = autoTradeConfig.testMode ? '🧪 테스트' : '💰 실전';
     
-  const message = `🤖 *자동매매 봇 v5.6 시작!*\n\n` +
+  const message = `🤖 *자동매매 봇 v5.7 시작!*\n\n` +
     `📌 모니터링: ${watchCoins.length}개 코인\n` +
     `💰 거래대금 필터: ${volumeFilterStatus}\n\n` +
     `🤖 *자동매매 ${autoTradeStatus}*\n` +
     `• 모드: ${testModeStatus}\n` +
     `• 1회 매수: ${autoTradeConfig.maxInvestPerTrade.toLocaleString()}원\n` +
-    `• 최대 포지션: ${autoTradeConfig.maxPositions}개\n` +
-    `• 손절: -${autoTradeConfig.stopLossPercent}%\n` +
-    `• 익절: +${autoTradeConfig.takeProfitPercent}%\n\n` +
-    `🆕 *v5.6.1 최종 보완:*\n` +
-    `• 💾 포지션 영구 저장\n` +
-    `• ATR 기반 트레일링 📊\n` +
-    `• BTC MA20 안전장치 🛡️\n` +
-    `• 5호가 슬리피지 방어\n` +
-    `• API 병렬 처리 + 재시도\n\n` +
+    `• 최대 포지션: ${autoTradeConfig.maxPositions}개\n\n` +
+    `🆕 *v5.7 동적 익절 전략 (옵션 C):*\n` +
+    `• RSI > 75: 30% 부분 익절\n` +
+    `• RSI > 80: 추가 30% 익절\n` +
+    `• RSI > 85: 전량 익절\n` +
+    `• 24시간 보유 + 3%↑: 익절\n` +
+    `• 나머지: ATR 트레일링 스탑\n\n` +
+    `🛡️ *리스크 관리:*\n` +
+    `• ATR 기반 손절\n` +
+    `• 본절 안전장치 (+3%)\n` +
+    `• 포지션 영구 저장 💾\n\n` +
     `🖥 서버: Render.com (24시간)\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
   
@@ -538,8 +540,8 @@ const sendStartupMessage = async () => {
 const main = async () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
-║  🚀 암호화폐 자동매매 봇 v5.6.1                       ║
-║  포지션 영구저장 + ATR 트레일링 + BTC MA20 안전장치   ║
+║  🚀 암호화폐 자동매매 봇 v5.7                         ║
+║  동적 익절 전략 (RSI 부분익절 + ATR 트레일링)         ║
 ║  Render.com 배포 버전                                ║
 ╚══════════════════════════════════════════════════════╝
   `);

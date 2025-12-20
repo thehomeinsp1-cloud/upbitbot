@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
-  "version": "5.6.1",
-  "description": "암호화폐 자동매매 봇 - 포지션영구저장 + ATR트레일링 + BTC MA20",
+  "version": "5.7.0",
+  "description": "암호화폐 자동매매 봇 - 동적 익절 전략 (RSI 부분익절 + ATR 트레일링)",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
