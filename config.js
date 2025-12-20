@@ -1,6 +1,6 @@
 /**
- * ⚙️ 설정 파일 v5.3
- * 자동매매 + 멀티타임프레임 + 뉴스분석
+ * ⚙️ 설정 파일 v5.7
+ * 웹소켓 실시간 + 자동매매 + 멀티타임프레임 + 뉴스분석
  */
 
 module.exports = {
@@ -17,6 +17,14 @@ module.exports = {
   
   UPBIT_ACCESS_KEY: process.env.UPBIT_ACCESS_KEY || '',
   UPBIT_SECRET_KEY: process.env.UPBIT_SECRET_KEY || '',
+
+  // ============================================
+  // 🔌 웹소켓 실시간 설정
+  // ============================================
+  
+  USE_WEBSOCKET: true,           // 웹소켓 실시간 모니터링
+  VOLUME_SPIKE_MULTIPLIER: 3.0,  // 거래량 급등 기준 (평균 대비 배수)
+  SPIKE_ANALYSIS_THRESHOLD: 70,  // 급등 시 분석 알림 기준 점수
 
   // ============================================
   // 🤖 자동매매 설정

@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
   "version": "5.7.0",
-  "description": "암호화폐 자동매매 봇 - 동적 익절 전략 (RSI 부분익절 + ATR 트레일링)",
+  "description": "암호화폐 자동매매 봇 - 웹소켓 실시간 + ATR 트레일링 + BTC MA20",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -14,13 +14,16 @@
     "signal",
     "telegram",
     "bot",
-    "auto-trade"
+    "auto-trade",
+    "websocket",
+    "realtime"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "technicalindicators": "^3.1.0",
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.0",
+    "ws": "^8.16.0"
   },
   "engines": {
     "node": ">=18.0.0"

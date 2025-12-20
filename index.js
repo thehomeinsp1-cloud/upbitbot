@@ -1,6 +1,6 @@
 /**
- * 🚀 암호화폐 자동매매 봇 v5.6
- * 업비트 API + ATR 트레일링 + BTC MA20 안전장치
+ * 🚀 암호화폐 자동매매 봇 v5.7
+ * 웹소켓 실시간 + ATR 트레일링 + BTC MA20 안전장치
  * Render.com 배포 버전
  */
 
@@ -10,6 +10,7 @@ const { analyzeMarket, getMarketSummary, fetchAllKRWMarkets } = require('./indic
 const { sendTelegramMessage, sendTelegramAlert } = require('./telegram');
 const { fetchCoinNews, fetchMarketNews, getSentimentText, fetchFearGreedIndex, adjustScoreWithSafety, checkBtcAboveMA20 } = require('./news');
 const trader = require('./trader');
+const websocket = require('./websocket');
 
 // ============================================
 // HTTP 서버 (Render 무료 티어 유지용)
@@ -18,8 +19,11 @@ const PORT = process.env.PORT || 3000;
 
 const server = http.createServer((req, res) => {
   const traderStatus = trader.getStatus();
+  const wsStatus = websocket.getStatus();
+  
   const status = {
     status: 'running',
+    version: '5.7.0',
     analysisCount,
     coinsMonitored: watchCoins.length,
     lastUpdate: lastUpdate ? lastUpdate.toISOString() : null,
@@ -29,6 +33,11 @@ const server = http.createServer((req, res) => {
       testMode: config.AUTO_TRADE.testMode,
       positions: traderStatus.positionCount,
       dailyPnL: traderStatus.dailyPnL,
+    },
+    websocket: {
+      connected: wsStatus.isConnected,
+      subscribedCoins: wsStatus.subscribedMarkets,
+      recentSpikes: wsStatus.recentSpikes
     }
   };
   
@@ -519,16 +528,12 @@ const sendStartupMessage = async () => {
     `• 모드: ${testModeStatus}\n` +
     `• 1회 매수: ${autoTradeConfig.maxInvestPerTrade.toLocaleString()}원\n` +
     `• 최대 포지션: ${autoTradeConfig.maxPositions}개\n\n` +
-    `🆕 *v5.7 동적 익절 전략 (옵션 C):*\n` +
-    `• RSI > 75: 30% 부분 익절\n` +
-    `• RSI > 80: 추가 30% 익절\n` +
-    `• RSI > 85: 전량 익절\n` +
-    `• 24시간 보유 + 3%↑: 익절\n` +
-    `• 나머지: ATR 트레일링 스탑\n\n` +
-    `🛡️ *리스크 관리:*\n` +
-    `• ATR 기반 손절\n` +
-    `• 본절 안전장치 (+3%)\n` +
-    `• 포지션 영구 저장 💾\n\n` +
+    `🆕 *v5.7 실시간 업그레이드:*\n` +
+    `• 🔌 웹소켓 실시간 체결\n` +
+    `• ⚡ 거래량 급등 즉시 감지\n` +
+    `• 📊 3배 거래량 시 즉시 분석\n` +
+    `• 💾 포지션 영구 저장\n` +
+    `• 🛡️ ATR 트레일링 스탑\n\n` +
     `🖥 서버: Render.com (24시간)\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
   
@@ -536,12 +541,38 @@ const sendStartupMessage = async () => {
   log(`🚀 봇 시작 완료!`);
 };
 
+// 거래량 급등 시 즉시 분석 실행
+const handleVolumeSpike = async (spikeData) => {
+  const { market, coinName, tradePrice, spikeRatio } = spikeData;
+  
+  console.log(`\n⚡ 급등 감지! ${coinName} 즉시 분석 시작...`);
+  
+  try {
+    // 즉시 분석 실행
+    const analysis = await analyzeAndAlert(market);
+    
+    if (analysis && parseFloat(analysis.scorePercent) >= 70) {
+      // 점수가 70점 이상이면 텔레그램 알림
+      await sendTelegramMessage(
+        `⚡ *거래량 급등 감지!*\n\n` +
+        `💰 ${coinName}\n` +
+        `📊 거래량: 평균 대비 ${spikeRatio}배\n` +
+        `💵 현재가: ${tradePrice.toLocaleString()}원\n` +
+        `🎯 분석 점수: ${analysis.scorePercent}점\n\n` +
+        `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`
+      );
+    }
+  } catch (error) {
+    console.error(`❌ 급등 분석 오류: ${error.message}`);
+  }
+};
+
 // 메인 실행
 const main = async () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
 ║  🚀 암호화폐 자동매매 봇 v5.7                         ║
-║  동적 익절 전략 (RSI 부분익절 + ATR 트레일링)         ║
+║  웹소켓 실시간 + ATR 트레일링 + BTC MA20 안전장치     ║
 ║  Render.com 배포 버전                                ║
 ╚══════════════════════════════════════════════════════╝
   `);
@@ -567,6 +598,12 @@ const main = async () => {
   if (config.AUTO_TRADE.enabled) {
     await trader.initialize();
   }
+  
+  // 🔌 웹소켓 실시간 모니터링 초기화
+  if (config.USE_WEBSOCKET !== false) {
+    await websocket.initialize(watchCoins);
+    websocket.setVolumeSpikeCallback(handleVolumeSpike);
+  }
 
   // 시작 메시지 발송
   await sendStartupMessage();
@@ -574,8 +611,9 @@ const main = async () => {
   // 첫 분석 실행
   await runFullAnalysis();
 
-  // 주기적 분석 실행
-  setInterval(runFullAnalysis, config.ANALYSIS_INTERVAL);
+  // 주기적 분석 실행 (3분으로 단축)
+  const analysisInterval = config.ANALYSIS_INTERVAL || 3 * 60 * 1000;
+  setInterval(runFullAnalysis, analysisInterval);
 };
 
 // 프로그램 시작
@@ -587,6 +625,7 @@ main().catch(error => {
 // 종료 시 처리
 process.on('SIGINT', async () => {
   log('\n👋 봇 종료 중...');
+  websocket.disconnect();
   await sendTelegramMessage('🔴 *봇이 종료되었습니다.*');
   process.exit(0);
 });
