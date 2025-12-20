@@ -118,26 +118,43 @@ const pollUpdates = async () => {
     for (const update of data.result) {
       lastUpdateId = update.update_id;
       
-      if (update.message && update.message.text) {
-        const text = update.message.text;
-        const chatId = update.message.chat.id;
+      // 일반 메시지 또는 채널 포스트
+      const msg = update.message || update.channel_post;
+      
+      if (msg && msg.text) {
+        const text = msg.text;
+        const chatId = msg.chat.id;
         
-        // 허용된 채팅에서만 명령어 처리
-        if (chatId.toString() !== CHAT_ID.toString()) continue;
+        // 디버깅용 로그
+        console.log(`📱 텔레그램 수신: "${text}" from ${chatId}`);
+        
+        // 허용된 채팅에서만 명령어 처리 (문자열 비교)
+        if (String(chatId) !== String(CHAT_ID)) {
+          console.log(`   ⏭️ 채팅 ID 불일치: ${chatId} vs ${CHAT_ID}`);
+          continue;
+        }
         
         // 명령어 파싱
         if (text.startsWith('/')) {
           const parts = text.split(' ');
-          const command = parts[0].replace('/', '').replace('@', ' ').split(' ')[0];
+          const command = parts[0].replace('/', '').replace('@', ' ').split(' ')[0].toLowerCase();
           const args = parts.slice(1);
+          
+          console.log(`   🔧 명령어 실행: ${command}`);
           
           if (commandHandlers[command]) {
             await commandHandlers[command](args);
+          } else {
+            console.log(`   ❓ 알 수 없는 명령어: ${command}`);
           }
         }
       }
     }
   } catch (error) {
+    // 폴링 오류 로그
+    console.error('📱 폴링 오류:', error.message);
+  }
+};
     // 폴링 오류 무시 (연결 끊김 등)
   }
 };

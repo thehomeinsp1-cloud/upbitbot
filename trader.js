@@ -761,7 +761,7 @@ const getStatus = () => {
   };
 };
 
-const getPositions = () => Array.from(positions.values());
+const getPositions = () => positions;
 
 // 일일 초기화
 const resetDaily = () => {

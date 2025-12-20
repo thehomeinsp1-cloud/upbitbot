@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
-  "version": "5.7.4",
-  "description": "암호화폐 자동매매 봇 - 웹대시보드 + 텔레그램명령어 + 스마트익절",
+  "version": "5.7.5",
+  "description": "암호화폐 자동매매 봇 - 대시보드 버그수정 + 텔레그램 명령어 수정",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
