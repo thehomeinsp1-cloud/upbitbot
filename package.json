@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
-  "version": "5.5.0",
-  "description": "암호화폐 자동매매 봇 - Fear&Greed + 트레일링스탑 + 슬리피지방어",
+  "version": "5.6.0",
+  "description": "암호화폐 자동매매 봇 - ATR트레일링 + BTC MA20 안전장치 + 병렬처리",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

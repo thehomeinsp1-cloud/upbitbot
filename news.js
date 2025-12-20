@@ -123,71 +123,82 @@ const fetchCoinnessNews = async () => {
     return coinnessCache.news;
   }
   
-// User-Agent 랜덤화 (차단 방지)
-const USER_AGENTS = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-];
+  // User-Agent 랜덤화 (차단 방지)
+  const USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  ];
 
-const getRandomUserAgent = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+  const getRandomUserAgent = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
   
-  try {
-    const response = await fetch(COINNESS_URL, {
-      headers: {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        'User-Agent': getRandomUserAgent()
-      }
-    });
-    
-    if (!response.ok) {
-      console.log('코인니스 조회 실패:', response.status);
-      return coinnessCache.news; // 기존 캐시 반환
-    }
-    
-    const html = await response.text();
-    
-    // 메시지 추출 (간단한 파싱)
-    const messages = [];
-    const messageRegex = /<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
-    let match;
-    
-    while ((match = messageRegex.exec(html)) !== null) {
-      // HTML 태그 제거
-      let text = match[1]
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&[^;]+;/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+  // 재시도 로직 (최대 3회)
+  const maxRetries = 3;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(COINNESS_URL, {
+        headers: {
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+          'User-Agent': getRandomUserAgent()
+        }
+      });
       
-      if (text.length > 10) {
-        messages.push(text);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      
+      const html = await response.text();
+      
+      // 메시지 추출 (간단한 파싱)
+      const messages = [];
+      const messageRegex = /<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+      let match;
+      
+      while ((match = messageRegex.exec(html)) !== null) {
+        // HTML 태그 제거
+        let text = match[1]
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/&[^;]+;/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        
+        if (text.length > 10) {
+          messages.push(text);
+        }
+      }
+      
+      // 최근 30개만 유지
+      const recentNews = messages.slice(0, 30);
+    
+      // 캐시 업데이트
+      coinnessCache = {
+        news: recentNews,
+        timestamp: now
+      };
+      
+      console.log(`📰 코인니스 뉴스 ${recentNews.length}개 로드`);
+      return recentNews;
+      
+    } catch (error) {
+      console.log(`⚠️ 코인니스 조회 실패 (${attempt}/${maxRetries}): ${error.message}`);
+      
+      if (attempt < maxRetries) {
+        // 재시도 전 대기 (2초)
+        await new Promise(r => setTimeout(r, 2000));
       }
     }
-    
-    // 최근 30개만 유지
-    const recentNews = messages.slice(0, 30);
-    
-    // 캐시 업데이트
-    coinnessCache = {
-      news: recentNews,
-      timestamp: now
-    };
-    
-    console.log(`📰 코인니스 뉴스 ${recentNews.length}개 로드`);
-    return recentNews;
-    
-  } catch (error) {
-    console.error('코인니스 조회 오류:', error.message);
-    return coinnessCache.news;
   }
+  
+  // 모든 재시도 실패 시 캐시 반환
+  console.log('❌ 코인니스 조회 최종 실패, 캐시 사용');
+  return coinnessCache.news;
 };
 
-// 한국어 감성 분석
 // 한국어 감성 분석 (가중치 기반)
 const analyzeKoreanSentiment = (text) => {
   let positiveScore = 0;
@@ -552,6 +563,81 @@ const adjustScoreByFearGreed = (score, fearGreedData) => {
   return Math.max(0, Math.min(100, score + adjustment));
 };
 
+// ============================================
+// 📊 BTC MA20 안전장치 (패닉셀 방어)
+// ============================================
+
+let btcMA20Cache = null;
+let btcMA20CacheTime = 0;
+const BTC_MA20_CACHE_DURATION = 5 * 60 * 1000; // 5분 캐시
+
+// BTC가 MA20 위에 있는지 체크
+const checkBtcAboveMA20 = async () => {
+  const now = Date.now();
+  
+  // 캐시 확인
+  if (btcMA20Cache !== null && (now - btcMA20CacheTime) < BTC_MA20_CACHE_DURATION) {
+    return btcMA20Cache;
+  }
+  
+  try {
+    // 업비트 BTC 일봉 데이터 조회 (최근 20일)
+    const response = await fetch('https://api.upbit.com/v1/candles/days?market=KRW-BTC&count=21');
+    const candles = await response.json();
+    
+    if (!candles || candles.length < 20) {
+      console.log('⚠️ BTC 캔들 데이터 부족');
+      return true; // 데이터 없으면 안전장치 패스
+    }
+    
+    // MA20 계산 (최근 20일 종가 평균)
+    const closes = candles.slice(1, 21).map(c => c.trade_price); // 최근 20일
+    const ma20 = closes.reduce((a, b) => a + b, 0) / 20;
+    const currentPrice = candles[0].trade_price; // 현재가
+    
+    const isAboveMA20 = currentPrice > ma20;
+    const distance = ((currentPrice - ma20) / ma20 * 100).toFixed(2);
+    
+    btcMA20Cache = {
+      isAboveMA20,
+      currentPrice,
+      ma20,
+      distance,
+    };
+    btcMA20CacheTime = now;
+    
+    console.log(`📈 BTC MA20: ${ma20.toLocaleString()}원 | 현재가: ${currentPrice.toLocaleString()}원 (${distance}%)`);
+    console.log(`   ${isAboveMA20 ? '✅ MA20 위 (안전)' : '⚠️ MA20 아래 (주의)'}`);
+    
+    return btcMA20Cache;
+  } catch (error) {
+    console.error('BTC MA20 체크 실패:', error.message);
+    return { isAboveMA20: true }; // 실패 시 안전장치 패스
+  }
+};
+
+// Fear & Greed + BTC MA20 통합 점수 조정
+const adjustScoreWithSafety = async (score, fearGreedData) => {
+  if (!fearGreedData) return score;
+  
+  const { value, tradingBias } = fearGreedData;
+  
+  // 극도의 공포 상태에서 보너스 적용 전 BTC MA20 체크
+  if (tradingBias > 0) { // 공포 상태 (매수 보너스)
+    const btcStatus = await checkBtcAboveMA20();
+    
+    // BTC가 MA20 아래면 공포 상태 보너스 무효화 (패닉셀 방어)
+    if (!btcStatus.isAboveMA20) {
+      console.log(`⚠️ BTC MA20 이탈! Fear & Greed 매수 보너스 무효화`);
+      return score; // 보너스 없이 원래 점수 반환
+    }
+  }
+  
+  // 정상 조정
+  const adjustment = score * tradingBias * 0.1;
+  return Math.max(0, Math.min(100, score + adjustment));
+};
+
 module.exports = {
   fetchCoinNews,
   fetchMarketNews,
@@ -560,5 +646,7 @@ module.exports = {
   fetchCoinnessNews,
   fetchFearGreedIndex,
   adjustScoreByFearGreed,
+  adjustScoreWithSafety,
+  checkBtcAboveMA20,
   analyzeCoinnessForCoin
 };

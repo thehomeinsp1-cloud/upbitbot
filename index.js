@@ -1,6 +1,6 @@
 /**
- * 🚀 암호화폐 자동매매 봇 v5.5
- * 업비트 API + 기술적 지표 + Fear & Greed + 자동매매
+ * 🚀 암호화폐 자동매매 봇 v5.6
+ * 업비트 API + ATR 트레일링 + BTC MA20 안전장치
  * Render.com 배포 버전
  */
 
@@ -8,7 +8,7 @@ const http = require('http');
 const config = require('./config');
 const { analyzeMarket, getMarketSummary, fetchAllKRWMarkets } = require('./indicators');
 const { sendTelegramMessage, sendTelegramAlert } = require('./telegram');
-const { fetchCoinNews, fetchMarketNews, getSentimentText, fetchFearGreedIndex, adjustScoreByFearGreed } = require('./news');
+const { fetchCoinNews, fetchMarketNews, getSentimentText, fetchFearGreedIndex, adjustScoreWithSafety, checkBtcAboveMA20 } = require('./news');
 const trader = require('./trader');
 
 // ============================================
@@ -386,18 +386,29 @@ const runFullAnalysis = async () => {
       log(`\n📈 ${styleConfig.name} 분석 시작...`);
       
       let styleSignalCount = 0;
-      for (const market of watchCoins) {
-        const analysis = await analyzeAndAlert(market, styleKey, styleConfig);
-        if (analysis) {
-          if (parseFloat(analysis.scorePercent) >= styleConfig.alert_threshold) {
-            styleSignalCount++;
+      
+      // 🚀 병렬 처리 (3개씩 동시 분석)
+      const BATCH_SIZE = 3;
+      for (let i = 0; i < watchCoins.length; i += BATCH_SIZE) {
+        const batch = watchCoins.slice(i, i + BATCH_SIZE);
+        
+        const batchResults = await Promise.all(
+          batch.map(market => analyzeAndAlert(market, styleKey, styleConfig))
+        );
+        
+        batchResults.forEach((analysis, idx) => {
+          if (analysis) {
+            if (parseFloat(analysis.scorePercent) >= styleConfig.alert_threshold) {
+              styleSignalCount++;
+            }
+            if (styleKey === 'daytrading') {
+              results.push(analysis);
+            }
           }
-          if (styleKey === 'daytrading') {
-            results.push(analysis);
-          }
-        }
-        // API 속도 제한 방지
-        await sleep(300);
+        });
+        
+        // 배치 간 휴식 (API 속도 제한)
+        await sleep(500);
       }
       
       log(`✅ ${styleConfig.name} 완료 (신호: ${styleSignalCount}개)`);
@@ -406,13 +417,22 @@ const runFullAnalysis = async () => {
       await sleep(500);
     }
   } else {
-    // 기본 분석 (단타)
-    for (const market of watchCoins) {
-      const analysis = await analyzeAndAlert(market);
-      if (analysis) {
-        results.push(analysis);
-      }
-      await sleep(350);
+    // 기본 분석 (단타) - 병렬 처리
+    const BATCH_SIZE = 3;
+    for (let i = 0; i < watchCoins.length; i += BATCH_SIZE) {
+      const batch = watchCoins.slice(i, i + BATCH_SIZE);
+      
+      const batchResults = await Promise.all(
+        batch.map(market => analyzeAndAlert(market))
+      );
+      
+      batchResults.forEach(analysis => {
+        if (analysis) {
+          results.push(analysis);
+        }
+      });
+      
+      await sleep(500);
     }
   }
 
@@ -492,7 +512,7 @@ const sendStartupMessage = async () => {
   const autoTradeStatus = autoTradeConfig.enabled ? '✅' : '❌';
   const testModeStatus = autoTradeConfig.testMode ? '🧪 테스트' : '💰 실전';
     
-  const message = `🤖 *자동매매 봇 v5.5 시작!*\n\n` +
+  const message = `🤖 *자동매매 봇 v5.6 시작!*\n\n` +
     `📌 모니터링: ${watchCoins.length}개 코인\n` +
     `💰 거래대금 필터: ${volumeFilterStatus}\n\n` +
     `🤖 *자동매매 ${autoTradeStatus}*\n` +
@@ -501,11 +521,12 @@ const sendStartupMessage = async () => {
     `• 최대 포지션: ${autoTradeConfig.maxPositions}개\n` +
     `• 손절: -${autoTradeConfig.stopLossPercent}%\n` +
     `• 익절: +${autoTradeConfig.takeProfitPercent}%\n\n` +
-    `🆕 *v5.5 신규 기능:*\n` +
-    `• Fear & Greed Index 📊\n` +
-    `• 트레일링 스탑 🎯\n` +
-    `• 슬리피지 방어 🛡️\n` +
-    `• 라이브러리 지표 계산\n\n` +
+    `🆕 *v5.6 전문가 업그레이드:*\n` +
+    `• ATR 기반 트레일링 📊\n` +
+    `• BTC MA20 안전장치 🛡️\n` +
+    `• 5호가 슬리피지 방어\n` +
+    `• API 병렬 처리 (3배 속도)\n` +
+    `• 에러 자동 재시도 (3회)\n\n` +
     `🖥 서버: Render.com (24시간)\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
   
@@ -517,8 +538,8 @@ const sendStartupMessage = async () => {
 const main = async () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
-║  🚀 암호화폐 자동매매 봇 v5.5                         ║
-║  Fear & Greed + 트레일링 스탑 + 슬리피지 방어         ║
+║  🚀 암호화폐 자동매매 봇 v5.6                         ║
+║  ATR 트레일링 + BTC MA20 안전장치 + 병렬 처리         ║
 ║  Render.com 배포 버전                                ║
 ╚══════════════════════════════════════════════════════╝
   `);

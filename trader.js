@@ -71,7 +71,15 @@ const executeBuy = async (market, analysis) => {
 
     const order = await upbit.buyMarket(market, investAmount);
     
-    // 6. 포지션 기록 (트레일링 스탑용 highPrice 추가)
+    // 6. ATR 기반 트레일링 스탑 계산
+    // ATR이 있으면 ATR*2, 없으면 고정 3%
+    const atrValue = analysis.atr || (currentPrice * 0.03); // ATR 없으면 3%로 대체
+    const atrPercent = (atrValue / currentPrice) * 100;
+    const trailingStopPercent = Math.max(atrPercent * 2, 3); // 최소 3%
+    
+    console.log(`   📊 ATR: ${atrPercent.toFixed(2)}% → 트레일링: ${trailingStopPercent.toFixed(2)}%`);
+    
+    // 7. 포지션 기록 (ATR 기반 트레일링 스탑)
     const position = {
       market,
       coinName,
@@ -83,6 +91,8 @@ const executeBuy = async (market, analysis) => {
       takeProfit: currentPrice * (1 + tradeConfig.takeProfitPercent / 100),
       highPrice: currentPrice,           // 트레일링 스탑용: 최고가 추적
       trailingActivated: false,          // 트레일링 스탑 활성화 여부
+      trailingStopPercent,               // ATR 기반 트레일링 스탑 비율
+      atr: atrValue,                     // ATR 값 저장
       score: analysis.scorePercent,
       orderId: order.uuid,
       testMode: order.testMode || false,
@@ -90,7 +100,7 @@ const executeBuy = async (market, analysis) => {
     
     positions.set(market, position);
     
-    // 7. 쿨다운 설정
+    // 8. 쿨다운 설정
     buyCooldowns.set(market, Date.now());
     
     // 8. 매매 기록
@@ -285,9 +295,12 @@ const monitorPositions = async () => {
         continue;
       }
       
-      // 3. 트레일링 스탑 로직
+      // 3. ATR 기반 트레일링 스탑 로직
       // - 5% 이상 수익: 트레일링 활성화 + 손절가를 본절로
-      // - 이후 고점 대비 3% 하락 시 매도 (추세 끝까지 추적)
+      // - 이후 고점 대비 ATR*2 하락 시 매도 (코인별 변동성 반영)
+      
+      // ATR 기반 트레일링 비율 (없으면 기본 3%)
+      const trailingPercent = position.trailingStopPercent || 3;
       
       if (pnlPercent >= 5) {
         // 최고가 갱신
@@ -300,14 +313,14 @@ const monitorPositions = async () => {
         if (!position.trailingActivated) {
           position.trailingActivated = true;
           position.stopLoss = position.entryPrice; // 본절로 이동
-          console.log(`   🎯 ${position.coinName} 트레일링 스탑 활성화! (본절 보장)`);
+          console.log(`   🎯 ${position.coinName} 트레일링 스탑 활성화! (ATR: ${trailingPercent.toFixed(1)}%)`);
         }
         
-        // 고점 대비 3% 하락 시 매도
+        // 고점 대비 ATR*2 하락 시 매도 (코인별 변동성 반영)
         const dropFromHigh = ((position.highPrice - currentPrice) / position.highPrice) * 100;
-        if (dropFromHigh >= 3) {
+        if (dropFromHigh >= trailingPercent) {
           const finalPnl = ((currentPrice / position.entryPrice) - 1) * 100;
-          console.log(`   📉 ${position.coinName} 고점 대비 ${dropFromHigh.toFixed(1)}% 하락!`);
+          console.log(`   📉 ${position.coinName} 고점 대비 ${dropFromHigh.toFixed(1)}% 하락! (ATR 기준: ${trailingPercent.toFixed(1)}%)`);
           await executeSell(market, `트레일링 스탑 (+${finalPnl.toFixed(1)}%)`, currentPrice);
           continue;
         }

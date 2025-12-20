@@ -56,14 +56,32 @@ const apiRequest = async (method, endpoint, query = null, body = null) => {
     options.body = JSON.stringify(body);
   }
 
-  const response = await fetch(url, options);
-  const data = await response.json();
+  // 재시도 로직 (최대 3회)
+  const maxRetries = 3;
+  let lastError;
   
-  if (data.error) {
-    throw new Error(`업비트 API 오류: ${data.error.message}`);
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(`업비트 API 오류: ${data.error.message}`);
+      }
+      
+      return data;
+    } catch (error) {
+      lastError = error;
+      console.log(`⚠️ API 요청 실패 (${attempt}/${maxRetries}): ${error.message}`);
+      
+      if (attempt < maxRetries) {
+        // 재시도 전 대기 (1초, 2초, 3초)
+        await new Promise(r => setTimeout(r, attempt * 1000));
+      }
+    }
   }
   
-  return data;
+  throw lastError;
 };
 
 // ============================================
@@ -245,39 +263,50 @@ const getOrderbook = async (market) => {
   }
 };
 
-// 슬리피지 체크: 매수 금액이 1호가 잔량의 일정 비율 이하인지 확인
-const checkSlippage = async (market, investAmount, maxRatio = 0.2) => {
+// 슬리피지 체크: 매수 금액이 상위 5호가 합계의 일정 비율 이하인지 확인
+const checkSlippage = async (market, investAmount, maxRatio = 0.3) => {
   try {
     const orderbook = await getOrderbook(market);
     if (!orderbook || !orderbook.orderbook_units) {
       return { safe: true, reason: '호가창 조회 실패, 진행' };
     }
     
-    // 매도 1호가 (우리가 사려는 가격)
-    const askUnit = orderbook.orderbook_units[0];
-    const askPrice = askUnit.ask_price;     // 매도 호가
-    const askSize = askUnit.ask_size;       // 매도 잔량
-    const askTotalKRW = askPrice * askSize; // 1호가 총 금액
+    // 상위 5호가 합계 계산 (더 정확한 슬리피지 예측)
+    const askUnits = orderbook.orderbook_units.slice(0, 5);
+    let totalAskKRW = 0;
+    let avgPrice = 0;
     
-    // 매수 금액이 1호가 잔량의 maxRatio(20%) 이하인지 체크
-    const ratio = investAmount / askTotalKRW;
+    askUnits.forEach((unit, i) => {
+      const unitKRW = unit.ask_price * unit.ask_size;
+      totalAskKRW += unitKRW;
+      if (i === 0) avgPrice = unit.ask_price; // 1호가 가격
+    });
+    
+    // 매수 금액이 5호가 합계의 maxRatio(30%) 이하인지 체크
+    const ratio = investAmount / totalAskKRW;
+    
+    // 예상 슬리피지 계산 (5호가까지 체결 시)
+    const lastAskPrice = askUnits[askUnits.length - 1].ask_price;
+    const expectedSlippage = ((lastAskPrice - avgPrice) / avgPrice * 100).toFixed(2);
     
     if (ratio > maxRatio) {
       return {
         safe: false,
-        reason: `슬리피지 위험: 매수금액(${investAmount.toLocaleString()}원)이 1호가 잔량(${askTotalKRW.toLocaleString()}원)의 ${(ratio * 100).toFixed(1)}% > ${maxRatio * 100}%`,
-        askPrice,
-        askTotalKRW,
-        ratio
+        reason: `슬리피지 위험: 매수금액이 5호가 합계(${(totalAskKRW/1000000).toFixed(1)}백만원)의 ${(ratio * 100).toFixed(1)}% (예상 슬리피지: ${expectedSlippage}%)`,
+        avgPrice,
+        totalAskKRW,
+        ratio,
+        expectedSlippage
       };
     }
     
     return {
       safe: true,
-      askPrice,
-      askTotalKRW,
+      avgPrice,
+      totalAskKRW,
       ratio,
-      reason: `슬리피지 안전: ${(ratio * 100).toFixed(1)}%`
+      expectedSlippage,
+      reason: `슬리피지 안전: 5호가 대비 ${(ratio * 100).toFixed(1)}%`
     };
   } catch (error) {
     console.error('슬리피지 체크 실패:', error.message);
