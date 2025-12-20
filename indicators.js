@@ -1371,5 +1371,25 @@ module.exports = {
   fetchBinanceCandles,
   fetchBinanceTicker,
   fetchAllBinanceUSDTMarkets,
-  fetchUSDKRWRate
+  fetchUSDKRWRate,
+  // 트레이더 모듈용 RSI 함수 (라이브러리 사용)
+  fetchRSIForTrader: async (market, period = 14) => {
+    try {
+      const candles = await fetchCandles(market, 60, period + 10);
+      if (!candles || candles.length < period + 1) return null;
+      
+      const closes = candles.map(c => c.trade_price);
+      
+      // technicalindicators 라이브러리 사용 (일관성)
+      const rsiResult = RSI.calculate({
+        values: closes,
+        period: period
+      });
+      
+      return rsiResult.length > 0 ? rsiResult[rsiResult.length - 1] : null;
+    } catch (error) {
+      console.error(`RSI 조회 실패 (${market}):`, error.message);
+      return null;
+    }
+  }
 };

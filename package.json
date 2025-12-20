@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
-  "version": "5.7.1",
-  "description": "암호화폐 자동매매 봇 - 웹소켓 실시간 + 알림 통합",
+  "version": "5.7.3",
+  "description": "암호화폐 자동매매 봇 - RSI일관성 + 매도슬리피지 + 거래량감소감지",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

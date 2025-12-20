@@ -315,6 +315,75 @@ const checkSlippage = async (market, investAmount, maxRatio = 0.3) => {
 };
 
 // ============================================
+// 📖 매도 슬리피지 체크 (급락 시 호가 얇을 때)
+// ============================================
+
+const checkSellSlippage = async (market, sellAmountKRW, maxSlippagePercent = 1.0) => {
+  try {
+    const orderbook = await getOrderbook(market);
+    if (!orderbook || !orderbook.orderbook_units) {
+      return { safe: true, reason: '호가창 조회 실패, 진행', shouldSplit: false };
+    }
+    
+    // 상위 5개 매수 호가 (우리가 팔 때 체결되는 가격)
+    const bidUnits = orderbook.orderbook_units.slice(0, 5);
+    let totalBidKRW = 0;
+    let bestBidPrice = 0;
+    
+    bidUnits.forEach((unit, i) => {
+      const unitKRW = unit.bid_price * unit.bid_size;
+      totalBidKRW += unitKRW;
+      if (i === 0) bestBidPrice = unit.bid_price; // 1호가 가격
+    });
+    
+    // 매도 금액이 5호가 합계보다 큰지 체크
+    const ratio = sellAmountKRW / totalBidKRW;
+    
+    // 예상 슬리피지 계산
+    const worstBidPrice = bidUnits[bidUnits.length - 1].bid_price;
+    const expectedSlippage = ((bestBidPrice - worstBidPrice) / bestBidPrice * 100);
+    
+    // 슬리피지가 1% 이상이면 분할 매도 권장
+    if (expectedSlippage > maxSlippagePercent && ratio > 0.3) {
+      return {
+        safe: false,
+        shouldSplit: true,
+        reason: `매도 슬리피지 위험: ${expectedSlippage.toFixed(2)}% (호가 얇음)`,
+        bestBidPrice,
+        totalBidKRW,
+        expectedSlippage,
+        recommendedSplits: Math.ceil(ratio / 0.3) // 30%씩 분할
+      };
+    }
+    
+    // 호가가 너무 얇으면 경고
+    if (totalBidKRW < sellAmountKRW * 0.5) {
+      return {
+        safe: true,
+        shouldSplit: true,
+        reason: `호가 얇음 주의: 매도금액의 ${(ratio * 100).toFixed(0)}%`,
+        bestBidPrice,
+        totalBidKRW,
+        expectedSlippage,
+        recommendedSplits: 2
+      };
+    }
+    
+    return {
+      safe: true,
+      shouldSplit: false,
+      bestBidPrice,
+      totalBidKRW,
+      expectedSlippage,
+      reason: `매도 슬리피지 안전: ${expectedSlippage.toFixed(2)}%`
+    };
+  } catch (error) {
+    console.error('매도 슬리피지 체크 실패:', error.message);
+    return { safe: true, shouldSplit: false, reason: '체크 실패, 진행' };
+  }
+};
+
+// ============================================
 // 🔐 API 연결 테스트
 // ============================================
 
@@ -346,5 +415,6 @@ module.exports = {
   getTicker,
   getOrderbook,
   checkSlippage,
+  checkSellSlippage,
   testConnection,
 };

@@ -1,7 +1,7 @@
 /**
  * 🤖 자동매매 트레이더 모듈
  * 매수/매도 결정 및 포지션 관리 + 영구 저장
- * 옵션 C: 동적 익절 전략 (RSI 기반 부분 익절 + 트레일링)
+ * 옵션 C: 동적 익절 전략 (RSI 기반 부분 익절 + 거래량 감소 감지 + 트레일링)
  */
 
 const fs = require('fs');
@@ -9,42 +9,55 @@ const path = require('path');
 const config = require('./config');
 const upbit = require('./upbit');
 const { sendTelegramMessage, sendTelegramMessageWithButtons } = require('./telegram');
+const { fetchRSIForTrader } = require('./indicators');
 
 // ============================================
-// 📊 RSI 계산 (동적 익절용)
+// 📊 RSI 조회 (indicators.js 라이브러리 사용 - 일관성)
 // ============================================
 
 const fetchRSI = async (market, period = 14) => {
+  return await fetchRSIForTrader(market, period);
+};
+
+// ============================================
+// 📉 거래량 감소 감지 (상승 끝 신호)
+// ============================================
+
+const fetchVolumeAnalysis = async (market) => {
   try {
-    const response = await fetch(`https://api.upbit.com/v1/candles/minutes/60?market=${market}&count=${period + 10}`);
+    // 최근 12시간 캔들 (1시간봉 12개)
+    const response = await fetch(`https://api.upbit.com/v1/candles/minutes/60?market=${market}&count=12`);
     const candles = await response.json();
     
-    if (!candles || candles.length < period + 1) return null;
+    if (!candles || candles.length < 12) return null;
     
-    // 최신순 → 과거순으로 정렬
-    candles.reverse();
+    // 최신순으로 정렬됨
+    // 최근 4시간 vs 이전 8시간 거래량 비교
+    const recentVolume = candles.slice(0, 4).reduce((sum, c) => sum + c.candle_acc_trade_volume, 0);
+    const prevVolume = candles.slice(4, 12).reduce((sum, c) => sum + c.candle_acc_trade_volume, 0);
     
-    let gains = 0;
-    let losses = 0;
+    // 이전 8시간 평균 (4시간 단위로 환산)
+    const prevAvgVolume = prevVolume / 2;
     
-    // 첫 번째 평균 계산
-    for (let i = 1; i <= period; i++) {
-      const change = candles[i].trade_price - candles[i - 1].trade_price;
-      if (change > 0) gains += change;
-      else losses += Math.abs(change);
-    }
+    // 거래량 변화율
+    const volumeChangeRatio = prevAvgVolume > 0 ? (recentVolume / prevAvgVolume) : 1;
     
-    const avgGain = gains / period;
-    const avgLoss = losses / period;
+    // 가격 변화 (최근 4시간)
+    const priceChange = ((candles[0].trade_price - candles[3].trade_price) / candles[3].trade_price) * 100;
     
-    if (avgLoss === 0) return 100;
+    // 다이버전스 감지: 가격 상승 + 거래량 감소
+    const isDivergence = priceChange > 1 && volumeChangeRatio < 0.5;
     
-    const rs = avgGain / avgLoss;
-    const rsi = 100 - (100 / (1 + rs));
-    
-    return rsi;
+    return {
+      recentVolume,
+      prevAvgVolume,
+      volumeChangeRatio,
+      priceChange,
+      isDivergence,
+      warning: volumeChangeRatio < 0.5 ? '거래량 급감' : volumeChangeRatio < 0.7 ? '거래량 감소' : null
+    };
   } catch (error) {
-    console.error(`RSI 계산 실패 (${market}):`, error.message);
+    console.error(`거래량 분석 실패 (${market}):`, error.message);
     return null;
   }
 };
@@ -353,6 +366,8 @@ const executeSell = async (market, reason, currentPrice) => {
 
     // 1. 잔고 확인
     let sellQuantity = position.quantity;
+    let slippageCheck = null;
+    let splitSellExecuted = false;
     
     if (!position.testMode) {
       const coinBalance = await upbit.getCoinBalance(coinName);
@@ -362,19 +377,54 @@ const executeSell = async (market, reason, currentPrice) => {
         return null;
       }
       sellQuantity = coinBalance.balance;
+      
+      // 2. 매도 슬리피지 체크
+      const sellAmountKRW = currentPrice * sellQuantity;
+      slippageCheck = await upbit.checkSellSlippage(market, sellAmountKRW);
+      
+      if (slippageCheck.shouldSplit && slippageCheck.recommendedSplits > 1) {
+        console.log(`⚠️ ${coinName} ${slippageCheck.reason}`);
+        console.log(`   → 분할 매도 실행: ${slippageCheck.recommendedSplits}회`);
+        
+        // 분할 매도 실행
+        const splits = slippageCheck.recommendedSplits;
+        const splitQuantity = sellQuantity / splits;
+        
+        for (let i = 0; i < splits; i++) {
+          console.log(`   📤 분할 매도 ${i + 1}/${splits}: ${splitQuantity.toFixed(8)} ${coinName}`);
+          await upbit.sellMarket(market, splitQuantity);
+          
+          // 분할 매도 간 1초 대기 (호가 회복)
+          if (i < splits - 1) {
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+        
+        console.log(`   ✅ 분할 매도 완료!`);
+        splitSellExecuted = true;
+      } else {
+        // 일반 매도
+        console.log(`✅ ${coinName} ${slippageCheck.reason}`);
+      }
     }
 
-    // 2. 매도 실행
-    const order = await upbit.sellMarket(market, sellQuantity);
+    // 3. 매도 실행 (테스트 모드 또는 일반 매도 시)
+    let order;
+    if (splitSellExecuted) {
+      // 분할 매도 완료 시 마지막 주문 정보 사용
+      order = { uuid: 'split-sell-' + Date.now(), testMode: false };
+    } else {
+      order = await upbit.sellMarket(market, sellQuantity);
+    }
     
-    // 3. 손익 계산
+    // 4. 손익 계산
     const pnl = (currentPrice - position.entryPrice) * sellQuantity;
     const pnlPercent = ((currentPrice / position.entryPrice) - 1) * 100;
     
-    // 4. 일일 손익 업데이트
+    // 5. 일일 손익 업데이트
     dailyPnL += pnl;
     
-    // 5. 매매 기록
+    // 6. 매매 기록
     const trade = {
       type: 'SELL',
       market,
@@ -392,13 +442,13 @@ const executeSell = async (market, reason, currentPrice) => {
     tradeHistory.push(trade);
     saveTradeHistory();
     
-    // 6. 포지션 삭제
+    // 7. 포지션 삭제
     positions.delete(market);
     
     // 💾 포지션 파일에 즉시 저장 (서버 재시작 대비)
     savePositions();
     
-    // 7. 텔레그램 알림
+    // 8. 텔레그램 알림
     await sendSellNotification(trade);
     
     console.log(`✅ ${coinName} 매도 완료! (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)`);
@@ -539,6 +589,45 @@ const monitorPositions = async () => {
             console.log(`   🟢 ${position.coinName} RSI 극단적 과매수! 전량 익절`);
             await executeSell(market, `RSI 극단 과매수 (${rsi.toFixed(0)})`, currentPrice);
             continue;
+          }
+        }
+      }
+      
+      // ============================================
+      // 2.5️⃣ 거래량 감소 감지 (상승 끝 신호)
+      // ============================================
+      if (pnlPercent >= 3) {
+        const volumeData = await fetchVolumeAnalysis(market);
+        
+        if (volumeData) {
+          // 다이버전스: 가격 상승 + 거래량 급감 → 상승 끝 신호
+          if (volumeData.isDivergence && pnlPercent >= 5) {
+            console.log(`   ⚠️ ${position.coinName} 거래량 다이버전스 감지!`);
+            console.log(`      가격: +${volumeData.priceChange.toFixed(1)}% / 거래량: ${(volumeData.volumeChangeRatio * 100).toFixed(0)}%`);
+            
+            // 트레일링 스탑 강화 (ATR의 50%로 축소)
+            const tightTrailing = (position.trailingStopPercent || 3) * 0.5;
+            
+            if (!position.tightTrailingActivated) {
+              position.tightTrailingActivated = true;
+              position.trailingStopPercent = tightTrailing;
+              savePositions();
+              console.log(`   🔒 트레일링 스탑 강화! ${tightTrailing.toFixed(1)}%`);
+              
+              await sendTelegramMessage(
+                `⚠️ *거래량 다이버전스 감지!*\n\n` +
+                `💰 ${position.coinName}\n` +
+                `📈 가격: +${volumeData.priceChange.toFixed(1)}%\n` +
+                `📉 거래량: ${(volumeData.volumeChangeRatio * 100).toFixed(0)}% (감소)\n\n` +
+                `🔒 트레일링 스탑 강화: ${tightTrailing.toFixed(1)}%\n` +
+                `💡 상승 추세 약화 신호, 익절 준비`
+              );
+            }
+          }
+          
+          // 거래량 급감 경고 (다이버전스는 아니지만 주의)
+          if (volumeData.warning && !volumeData.isDivergence) {
+            console.log(`   📉 ${position.coinName} ${volumeData.warning} (${(volumeData.volumeChangeRatio * 100).toFixed(0)}%)`);
           }
         }
       }
