@@ -1,5 +1,5 @@
 /**
- * 🚀 암호화폐 통합 매수 신호 알림 봇
+ * 🚀 암호화폐 통합 매수 신호 알림 봇 + 자동매매
  * 업비트 API + 기술적 지표 분석 + 텔레그램 알림
  * Render.com 배포 버전
  */
@@ -9,6 +9,7 @@ const config = require('./config');
 const { analyzeMarket, getMarketSummary, fetchAllKRWMarkets } = require('./indicators');
 const { sendTelegramMessage, sendTelegramAlert } = require('./telegram');
 const { fetchCoinNews, fetchMarketNews, getSentimentText } = require('./news');
+const trader = require('./trader');
 
 // ============================================
 // HTTP 서버 (Render 무료 티어 유지용)
@@ -16,12 +17,19 @@ const { fetchCoinNews, fetchMarketNews, getSentimentText } = require('./news');
 const PORT = process.env.PORT || 3000;
 
 const server = http.createServer((req, res) => {
+  const traderStatus = trader.getStatus();
   const status = {
     status: 'running',
     analysisCount,
     coinsMonitored: watchCoins.length,
     lastUpdate: lastUpdate ? lastUpdate.toISOString() : null,
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    autoTrade: {
+      enabled: config.AUTO_TRADE.enabled,
+      testMode: config.AUTO_TRADE.testMode,
+      positions: traderStatus.positionCount,
+      dailyPnL: traderStatus.dailyPnL,
+    }
   };
   
   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -135,6 +143,15 @@ const analyzeAndAlert = async (market, styleKey = null, styleConfig = null) => {
         const message = formatAlertMessage(analysis);
         await sendTelegramAlert(message, coinName);  // 인라인 버튼용 코인 심볼 전달
         log(`🚨 ${styleConfig?.name || ''} ${coinName} 강력 매수 신호 발송! (최종: ${finalScore.toFixed(0)}점)`);
+        
+        // 🤖 자동매매 실행 (단타 스타일만)
+        if (config.AUTO_TRADE.enabled && (!styleKey || styleKey === 'daytrading')) {
+          try {
+            await trader.executeBuy(market, analysis);
+          } catch (tradeError) {
+            log(`⚠️ 자동매매 오류: ${tradeError.message}`);
+          }
+        }
       }
     }
 
@@ -327,6 +344,14 @@ const runFullAnalysis = async () => {
   log(`📊 분석 시작 (#${analysisCount}) - ${watchCoins.length}개 코인`);
   log(`${'='.repeat(50)}`);
   
+  // 🤖 자동매매: 일일 초기화
+  trader.resetDaily();
+  
+  // 🤖 자동매매: 포지션 모니터링 (손절/익절 체크)
+  if (config.AUTO_TRADE.enabled) {
+    await trader.monitorPositions();
+  }
+  
   // 김치 프리미엄 과열 체크 (분석 시작 시)
   await checkKimchiPremiumAlert();
 
@@ -454,27 +479,27 @@ const sendStartupMessage = async () => {
     ? `${watchCoins.slice(0, 10).map(c => c.replace('KRW-', '')).join(', ')} 외 ${watchCoins.length - 10}개`
     : watchCoins.map(c => c.replace('KRW-', '')).join(', ');
     
-  const multiStyleStatus = config.MULTI_STYLE_ANALYSIS ? '✅' : '❌';
   const volumeFilterStatus = config.USE_VOLUME_FILTER ? `✅ (${config.MIN_TRADING_VALUE}억+)` : '❌';
-  const dynamicWeightStatus = config.USE_DYNAMIC_WEIGHTS ? '✅' : '❌';
-  const kimchiAlertStatus = config.KIMCHI_PREMIUM_ALERT ? '✅' : '❌';
+  
+  // 자동매매 상태
+  const autoTradeConfig = config.AUTO_TRADE;
+  const autoTradeStatus = autoTradeConfig.enabled ? '✅' : '❌';
+  const testModeStatus = autoTradeConfig.testMode ? '🧪 테스트' : '💰 실전';
     
-  const message = `🤖 *암호화폐 신호 봇 v5.3 시작!*\n\n` +
+  const message = `🤖 *자동매매 봇 v5.4 시작!*\n\n` +
     `📌 모니터링: ${watchCoins.length}개 코인\n` +
     `💰 거래대금 필터: ${volumeFilterStatus}\n\n` +
-    `🎯 *멀티 스타일 분석 ${multiStyleStatus}*\n` +
-    `• 🔥 스캘핑 → ⚡ 단타 → 📈 스윙 → 🏦 장기\n\n` +
-    `🆕 *v5.3 신규 기능:*\n` +
-    `• 볼린저 Squeeze 감지 🔥\n` +
-    `• 김프 과열 알림 ${kimchiAlertStatus}\n` +
-    `• 뉴스 키워드 가중치 📰\n` +
-    `• ATR 배수 3.0 (휘두르기 방지)\n\n` +
-    `📰 *뉴스 분석:*\n` +
-    `• CryptoPanic (글로벌) ✅\n` +
-    `• 코인니스 (한국) ✅\n\n` +
+    `🤖 *자동매매 ${autoTradeStatus}*\n` +
+    `• 모드: ${testModeStatus}\n` +
+    `• 1회 매수: ${autoTradeConfig.maxInvestPerTrade.toLocaleString()}원\n` +
+    `• 최대 포지션: ${autoTradeConfig.maxPositions}개\n` +
+    `• 손절: -${autoTradeConfig.stopLossPercent}%\n` +
+    `• 익절: +${autoTradeConfig.takeProfitPercent}%\n\n` +
     `🛡️ *리스크 관리:*\n` +
-    `• ATR 손절가 자동 계산\n` +
-    `• 김프 ${config.KIMCHI_PREMIUM_HIGH}%+ 과열 경고\n\n` +
+    `• 일일 손실 한도: ${autoTradeConfig.dailyLossLimit.toLocaleString()}원\n` +
+    `• 총 투자 한도: ${autoTradeConfig.maxTotalInvest.toLocaleString()}원\n\n` +
+    `📰 *뉴스 분석:*\n` +
+    `• CryptoPanic + 코인니스 ✅\n\n` +
     `🖥 서버: Render.com (24시간)\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
   
@@ -486,8 +511,8 @@ const sendStartupMessage = async () => {
 const main = async () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
-║  🚀 암호화폐 통합 매수 신호 알림 봇                    ║
-║  RSI + MACD + BB + MA + Stoch + Volume 분석          ║
+║  🚀 암호화폐 자동매매 봇 v5.4                         ║
+║  신호 분석 + 자동 매수/매도 + 리스크 관리             ║
 ║  Render.com 배포 버전                                ║
 ╚══════════════════════════════════════════════════════╝
   `);
@@ -508,6 +533,11 @@ const main = async () => {
 
   // 코인 목록 초기화
   await initializeCoins();
+  
+  // 🤖 자동매매 초기화
+  if (config.AUTO_TRADE.enabled) {
+    await trader.initialize();
+  }
 
   // 시작 메시지 발송
   await sendStartupMessage();

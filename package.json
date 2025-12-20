@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
-  "version": "5.3.0",
-  "description": "암호화폐 통합 매수 신호 알림 봇 - Squeeze 감지 + 김프 알림",
+  "version": "5.4.0",
+  "description": "암호화폐 자동매매 봇 - 신호분석 + 자동 매수/매도",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,17 +9,18 @@
   "keywords": [
     "crypto",
     "bitcoin",
-    "binance",
     "upbit",
     "trading",
     "signal",
     "telegram",
-    "bot"
+    "bot",
+    "auto-trade"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "technicalindicators": "^3.1.0"
+    "technicalindicators": "^3.1.0",
+    "uuid": "^9.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
