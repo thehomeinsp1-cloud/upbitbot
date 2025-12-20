@@ -151,10 +151,6 @@ const pollUpdates = async () => {
       }
     }
   } catch (error) {
-    // 폴링 오류 로그
-    console.error('📱 폴링 오류:', error.message);
-  }
-};
     // 폴링 오류 무시 (연결 끊김 등)
   }
 };
