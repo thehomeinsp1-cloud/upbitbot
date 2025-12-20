@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
-  "version": "5.2.0",
-  "description": "암호화폐 통합 매수 신호 알림 봇 - 동적 가중치 + 거래대금 필터",
+  "version": "5.3.0",
+  "description": "암호화폐 통합 매수 신호 알림 봇 - Squeeze 감지 + 김프 알림",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

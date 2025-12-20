@@ -12,34 +12,43 @@ const CRYPTOPANIC_API = 'https://cryptopanic.com/api/free/v1/posts/';
 const COINNESS_URL = 'https://t.me/s/coinnesskr';
 
 // ============================================
-// 한국어 감성 분석 키워드
+// 한국어 감성 분석 키워드 (가중치 포함)
 // ============================================
 
-const KOREAN_POSITIVE_KEYWORDS = [
-  // 가격 상승
-  '급등', '폭등', '상승', '돌파', '신고가', '최고가', '반등', '상승세',
-  '강세', '불장', '상방', '랠리', '펌핑', '매수세', '호재',
-  // 긍정적 뉴스
-  '상장', '승인', 'ETF', '파트너십', '협력', '투자', '채택',
-  '도입', '확대', '성장', '흑자', '수익', '호실적',
-  // 기관/대형
-  '기관매수', '대량매수', '고래', '축적', '매집',
-  // 기술적
-  '골든크로스', '지지', '바닥', '반등', '돌파'
-];
+// 긍정 키워드 + 가중치 (높을수록 강한 신호)
+const KOREAN_POSITIVE_KEYWORDS = {
+  // 🔥 결정적 키워드 (가중치 3)
+  '급등': 3, '폭등': 3, '신고가': 3, '상장': 3, 'ETF': 3,
+  '승인': 3, '대형호재': 3, '숏스퀴즈': 3,
+  
+  // ⚡ 강한 키워드 (가중치 2)
+  '돌파': 2, '최고가': 2, '강세': 2, '불장': 2, '랠리': 2,
+  '파트너십': 2, '기관매수': 2, '대량매수': 2, '매집': 2,
+  '골든크로스': 2, '반등': 2,
+  
+  // 📈 일반 키워드 (가중치 1)
+  '상승': 1, '상승세': 1, '상방': 1, '펌핑': 1, '매수세': 1,
+  '호재': 1, '협력': 1, '투자': 1, '채택': 1, '도입': 1,
+  '확대': 1, '성장': 1, '흑자': 1, '수익': 1, '호실적': 1,
+  '고래': 1, '축적': 1, '지지': 1, '바닥': 1
+};
 
-const KOREAN_NEGATIVE_KEYWORDS = [
-  // 가격 하락
-  '급락', '폭락', '하락', '붕괴', '저점', '최저가', '약세', '하방',
-  '조정', '덤핑', '매도세', '악재', '손실',
-  // 부정적 뉴스
-  '상폐', '폐지', '규제', '제재', '소송', '해킹', '사기',
-  '파산', '청산', '디폴트', '적자', '손실',
-  // 기관/대형
-  '기관매도', '대량매도', '고래매도', '물량출회',
-  // 기술적
-  '데드크로스', '저항', '이탈', '붕괴', '하락'
-];
+// 부정 키워드 + 가중치
+const KOREAN_NEGATIVE_KEYWORDS = {
+  // 🔥 결정적 키워드 (가중치 3)
+  '급락': 3, '폭락': 3, '붕괴': 3, '상폐': 3, '해킹': 3,
+  '파산': 3, '사기': 3, '롱스퀴즈': 3,
+  
+  // ⚡ 강한 키워드 (가중치 2)
+  '하락': 2, '저점': 2, '최저가': 2, '약세': 2, '하방': 2,
+  '규제': 2, '제재': 2, '소송': 2, '청산': 2, '기관매도': 2,
+  '대량매도': 2, '데드크로스': 2,
+  
+  // 📉 일반 키워드 (가중치 1)
+  '조정': 1, '덤핑': 1, '매도세': 1, '악재': 1, '손실': 1,
+  '폐지': 1, '디폴트': 1, '적자': 1, '고래매도': 1,
+  '물량출회': 1, '저항': 1, '이탈': 1
+};
 
 // 코인 심볼 매핑 (업비트 -> 글로벌)
 const symbolMap = {
@@ -114,11 +123,24 @@ const fetchCoinnessNews = async () => {
     return coinnessCache.news;
   }
   
+// User-Agent 랜덤화 (차단 방지)
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+];
+
+const getRandomUserAgent = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+  
   try {
     const response = await fetch(COINNESS_URL, {
       headers: {
-        'Accept': 'text/html',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        'User-Agent': getRandomUserAgent()
       }
     });
     
@@ -166,25 +188,33 @@ const fetchCoinnessNews = async () => {
 };
 
 // 한국어 감성 분석
+// 한국어 감성 분석 (가중치 기반)
 const analyzeKoreanSentiment = (text) => {
-  let positiveCount = 0;
-  let negativeCount = 0;
+  let positiveScore = 0;
+  let negativeScore = 0;
+  let matchedKeywords = [];
   
-  // 긍정 키워드 체크
-  for (const keyword of KOREAN_POSITIVE_KEYWORDS) {
+  // 긍정 키워드 체크 (가중치 적용)
+  for (const [keyword, weight] of Object.entries(KOREAN_POSITIVE_KEYWORDS)) {
     if (text.includes(keyword)) {
-      positiveCount++;
+      positiveScore += weight;
+      matchedKeywords.push(`+${keyword}(${weight})`);
     }
   }
   
-  // 부정 키워드 체크
-  for (const keyword of KOREAN_NEGATIVE_KEYWORDS) {
+  // 부정 키워드 체크 (가중치 적용)
+  for (const [keyword, weight] of Object.entries(KOREAN_NEGATIVE_KEYWORDS)) {
     if (text.includes(keyword)) {
-      negativeCount++;
+      negativeScore += weight;
+      matchedKeywords.push(`-${keyword}(${weight})`);
     }
   }
   
-  return { positiveCount, negativeCount };
+  return { 
+    positiveCount: positiveScore,  // 가중치 합산 점수
+    negativeCount: negativeScore,
+    matchedKeywords
+  };
 };
 
 // 특정 코인 관련 뉴스 필터링

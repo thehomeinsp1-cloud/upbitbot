@@ -267,6 +267,57 @@ const formatAlertMessage = (analysis) => {
 // 스타일별 마지막 분석 시간 추적
 const lastStyleAnalysis = {};
 
+// 김치 프리미엄 과열 알림 추적
+let lastKimchiAlert = 0;
+const KIMCHI_ALERT_COOLDOWN = 60 * 60 * 1000; // 1시간 쿨다운
+
+// 김치 프리미엄 확인 및 알림
+const checkKimchiPremiumAlert = async () => {
+  if (!config.KIMCHI_PREMIUM_ALERT) return;
+  
+  const now = Date.now();
+  if (now - lastKimchiAlert < KIMCHI_ALERT_COOLDOWN) return;
+  
+  try {
+    // BTC 분석으로 김치 프리미엄 확인
+    const btcAnalysis = await analyzeMarket('KRW-BTC');
+    if (!btcAnalysis || !btcAnalysis.kimchiPremium) return;
+    
+    const premium = parseFloat(btcAnalysis.kimchiPremium);
+    
+    // 과열 알림 (5% 이상)
+    if (premium >= config.KIMCHI_PREMIUM_HIGH) {
+      lastKimchiAlert = now;
+      const message = `🔴 *김치 프리미엄 과열 경고!*\n\n` +
+        `📊 현재 프리미엄: *${premium.toFixed(2)}%*\n\n` +
+        `⚠️ 국내 가격이 해외 대비 ${premium.toFixed(1)}% 높습니다.\n` +
+        `• 고점 매수 주의\n` +
+        `• 신규 진입 자제 권장\n` +
+        `• 프리미엄 축소 시 손실 가능\n\n` +
+        `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
+      
+      await sendTelegramMessage(message);
+      log(`🔴 김치 프리미엄 과열 알림 발송! (${premium.toFixed(2)}%)`);
+    }
+    
+    // 역프리미엄 알림 (-1% 이하)
+    else if (premium <= config.KIMCHI_PREMIUM_LOW) {
+      lastKimchiAlert = now;
+      const message = `🟢 *역 프리미엄 발생!*\n\n` +
+        `📊 현재 프리미엄: *${premium.toFixed(2)}%*\n\n` +
+        `💡 국내 가격이 해외 대비 저렴합니다.\n` +
+        `• 매수 기회 가능성\n` +
+        `• 프리미엄 정상화 시 이익 가능\n\n` +
+        `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
+      
+      await sendTelegramMessage(message);
+      log(`🟢 역프리미엄 알림 발송! (${premium.toFixed(2)}%)`);
+    }
+  } catch (error) {
+    log(`김치 프리미엄 확인 오류: ${error.message}`);
+  }
+};
+
 const runFullAnalysis = async () => {
   analysisCount++;
   lastUpdate = new Date();
@@ -275,6 +326,9 @@ const runFullAnalysis = async () => {
   log(`\n${'='.repeat(50)}`);
   log(`📊 분석 시작 (#${analysisCount}) - ${watchCoins.length}개 코인`);
   log(`${'='.repeat(50)}`);
+  
+  // 김치 프리미엄 과열 체크 (분석 시작 시)
+  await checkKimchiPremiumAlert();
 
   const results = [];
   
@@ -403,23 +457,24 @@ const sendStartupMessage = async () => {
   const multiStyleStatus = config.MULTI_STYLE_ANALYSIS ? '✅' : '❌';
   const volumeFilterStatus = config.USE_VOLUME_FILTER ? `✅ (${config.MIN_TRADING_VALUE}억+)` : '❌';
   const dynamicWeightStatus = config.USE_DYNAMIC_WEIGHTS ? '✅' : '❌';
+  const kimchiAlertStatus = config.KIMCHI_PREMIUM_ALERT ? '✅' : '❌';
     
-  const message = `🤖 *암호화폐 신호 봇 v5.2 시작!*\n\n` +
+  const message = `🤖 *암호화폐 신호 봇 v5.3 시작!*\n\n` +
     `📌 모니터링: ${watchCoins.length}개 코인\n` +
     `💰 거래대금 필터: ${volumeFilterStatus}\n\n` +
     `🎯 *멀티 스타일 분석 ${multiStyleStatus}*\n` +
     `• 🔥 스캘핑 → ⚡ 단타 → 📈 스윙 → 🏦 장기\n\n` +
-    `🆕 *v5.2 신규 기능:*\n` +
-    `• 동적 가중치 ${dynamicWeightStatus}\n` +
-    `• 거래대금 필터 ${volumeFilterStatus}\n` +
-    `• 인라인 버튼 (업비트/차트)\n` +
-    `• ATR 배수 2.5 (변동성 대응)\n\n` +
+    `🆕 *v5.3 신규 기능:*\n` +
+    `• 볼린저 Squeeze 감지 🔥\n` +
+    `• 김프 과열 알림 ${kimchiAlertStatus}\n` +
+    `• 뉴스 키워드 가중치 📰\n` +
+    `• ATR 배수 3.0 (휘두르기 방지)\n\n` +
     `📰 *뉴스 분석:*\n` +
     `• CryptoPanic (글로벌) ✅\n` +
     `• 코인니스 (한국) ✅\n\n` +
     `🛡️ *리스크 관리:*\n` +
     `• ATR 손절가 자동 계산\n` +
-    `• 스타일별 목표가 제공\n\n` +
+    `• 김프 ${config.KIMCHI_PREMIUM_HIGH}%+ 과열 경고\n\n` +
     `🖥 서버: Render.com (24시간)\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
   

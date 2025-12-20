@@ -718,7 +718,7 @@ const calculateMACD = (closes, fast = 12, slow = 26, signal = 9) => {
 // 볼린저밴드
 const calculateBollingerBands = (closes, period = 20, stdDev = 2) => {
   if (closes.length < period) {
-    return { upper: null, middle: null, lower: null };
+    return { upper: null, middle: null, lower: null, squeeze: false, bandwidth: null };
   }
   
   const sma = calculateSMA(closes, period);
@@ -727,10 +727,51 @@ const calculateBollingerBands = (closes, period = 20, stdDev = 2) => {
   const variance = squaredDiffs.reduce((a, b) => a + b, 0) / period;
   const std = Math.sqrt(variance);
   
+  const upper = sma + std * stdDev;
+  const lower = sma - std * stdDev;
+  
+  // 밴드폭 계산 (Bandwidth = (상단 - 하단) / 중간 * 100)
+  const bandwidth = ((upper - lower) / sma) * 100;
+  
+  // Squeeze 감지: 최근 20봉의 밴드폭 히스토리 계산
+  let squeeze = false;
+  let squeezeRelease = false;
+  
+  if (closes.length >= period * 2) {
+    // 과거 밴드폭들 계산
+    const bandwidths = [];
+    for (let i = period; i <= closes.length; i++) {
+      const histSlice = closes.slice(i - period, i);
+      const histSma = histSlice.reduce((a, b) => a + b, 0) / period;
+      const histSquaredDiffs = histSlice.map(c => Math.pow(c - histSma, 2));
+      const histVariance = histSquaredDiffs.reduce((a, b) => a + b, 0) / period;
+      const histStd = Math.sqrt(histVariance);
+      const histUpper = histSma + histStd * stdDev;
+      const histLower = histSma - histStd * stdDev;
+      const histBandwidth = ((histUpper - histLower) / histSma) * 100;
+      bandwidths.push(histBandwidth);
+    }
+    
+    // 최근 밴드폭의 최소값과 비교
+    const recentBandwidths = bandwidths.slice(-20);
+    const minBandwidth = Math.min(...recentBandwidths);
+    const avgBandwidth = recentBandwidths.reduce((a, b) => a + b, 0) / recentBandwidths.length;
+    
+    // 현재 밴드폭이 평균의 50% 이하면 Squeeze 상태
+    squeeze = bandwidth < avgBandwidth * 0.5;
+    
+    // Squeeze 탈출: 밴드폭이 최근 최소값에서 20% 이상 확대
+    const prevBandwidth = bandwidths[bandwidths.length - 2] || bandwidth;
+    squeezeRelease = prevBandwidth < avgBandwidth * 0.6 && bandwidth > prevBandwidth * 1.2;
+  }
+  
   return {
-    upper: sma + std * stdDev,
+    upper,
     middle: sma,
-    lower: sma - std * stdDev
+    lower,
+    bandwidth: bandwidth.toFixed(2),
+    squeeze,           // 밴드폭 축소 (급등 전조)
+    squeezeRelease     // 밴드폭 확장 시작 (급등 시작!)
   };
 };
 
@@ -1135,11 +1176,21 @@ const analyzeMarket = async (market, styleConfig = null) => {
       }
     }
 
-    // 4. 볼린저밴드 분석
+    // 4. 볼린저밴드 분석 (Squeeze 감지 포함)
     if (bb.lower !== null) {
       const bbPosition = ((currentAnalysisPrice - bb.lower) / (bb.upper - bb.lower)) * 100;
       
-      if (currentAnalysisPrice <= bb.lower) {
+      // Squeeze 탈출 감지 (급등 시작 신호!)
+      if (bb.squeezeRelease && currentAnalysisPrice > bb.middle) {
+        signals.push({ indicator: '볼린저밴드', signal: '🔥 Squeeze 탈출! (급등 시작)', score: weights.BOLLINGER * 1.5, type: 'buy' });
+        totalScore += weights.BOLLINGER * 1.5;
+      }
+      // Squeeze 상태 (급등 전조)
+      else if (bb.squeeze) {
+        signals.push({ indicator: '볼린저밴드', signal: '⚡ Squeeze (급등 대기)', score: weights.BOLLINGER * 0.8, type: 'neutral' });
+        totalScore += weights.BOLLINGER * 0.8;
+      }
+      else if (currentAnalysisPrice <= bb.lower) {
         signals.push({ indicator: '볼린저밴드', signal: '하단 이탈 (반등 가능)', score: weights.BOLLINGER, type: 'buy' });
         totalScore += weights.BOLLINGER;
       } else if (bbPosition < 30) {
