@@ -845,4 +845,74 @@ module.exports = {
   loadPositions,
   savePositions,
   fetchRSI,
+  getTradeHistory,
+  getStatistics,
 };
+
+// ============================================
+// 📊 통계 함수들
+// ============================================
+
+function getTradeHistory() {
+  return tradeHistory;
+}
+
+function getStatistics(period = 'all') {
+  const now = new Date();
+  let filteredTrades = [...tradeHistory];
+  
+  // 기간 필터
+  if (period === 'today') {
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    filteredTrades = tradeHistory.filter(t => new Date(t.timestamp) >= todayStart);
+  } else if (period === 'week') {
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    filteredTrades = tradeHistory.filter(t => new Date(t.timestamp) >= weekAgo);
+  } else if (period === 'month') {
+    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    filteredTrades = tradeHistory.filter(t => new Date(t.timestamp) >= monthAgo);
+  }
+  
+  // 매도 거래만 (수익 계산용)
+  const sellTrades = filteredTrades.filter(t => t.type === 'SELL');
+  
+  if (sellTrades.length === 0) {
+    return {
+      period,
+      totalTrades: 0,
+      wins: 0,
+      losses: 0,
+      winRate: 0,
+      totalPnl: 0,
+      totalPnlPercent: 0,
+      avgPnlPercent: 0,
+      maxWin: 0,
+      maxLoss: 0,
+      trades: []
+    };
+  }
+  
+  const wins = sellTrades.filter(t => t.pnl >= 0);
+  const losses = sellTrades.filter(t => t.pnl < 0);
+  const totalPnl = sellTrades.reduce((sum, t) => sum + t.pnl, 0);
+  const totalInvest = sellTrades.reduce((sum, t) => sum + (t.entryPrice * t.quantity), 0);
+  const avgPnlPercent = sellTrades.reduce((sum, t) => sum + t.pnlPercent, 0) / sellTrades.length;
+  
+  const pnlPercents = sellTrades.map(t => t.pnlPercent);
+  const maxWin = Math.max(...pnlPercents, 0);
+  const maxLoss = Math.min(...pnlPercents, 0);
+  
+  return {
+    period,
+    totalTrades: sellTrades.length,
+    wins: wins.length,
+    losses: losses.length,
+    winRate: ((wins.length / sellTrades.length) * 100).toFixed(1),
+    totalPnl: Math.round(totalPnl),
+    totalPnlPercent: totalInvest > 0 ? ((totalPnl / totalInvest) * 100).toFixed(2) : 0,
+    avgPnlPercent: avgPnlPercent.toFixed(2),
+    maxWin: maxWin.toFixed(2),
+    maxLoss: maxLoss.toFixed(2),
+    trades: sellTrades.slice(-20).reverse() // 최근 20개
+  };
+}

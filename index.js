@@ -17,13 +17,288 @@ const websocket = require('./websocket');
 // ============================================
 const PORT = process.env.PORT || 3000;
 
+// 대시보드 HTML 생성
+const generateDashboardHTML = () => {
+  const traderStatus = trader.getStatus();
+  const stats = trader.getStatistics('all');
+  const todayStats = trader.getStatistics('today');
+  const weekStats = trader.getStatistics('week');
+  const monthStats = trader.getStatistics('month');
+  const positions = trader.getPositions();
+  
+  const positionRows = Array.from(positions.entries()).map(([market, pos]) => {
+    const pnl = pos.currentPrice ? ((pos.currentPrice / pos.entryPrice - 1) * 100).toFixed(2) : '0.00';
+    const pnlClass = parseFloat(pnl) >= 0 ? 'profit' : 'loss';
+    return `
+      <tr>
+        <td><strong>${pos.coinName}</strong></td>
+        <td>${pos.entryPrice.toLocaleString()}원</td>
+        <td>${pos.investAmount.toLocaleString()}원</td>
+        <td class="${pnlClass}">${pnl}%</td>
+      </tr>
+    `;
+  }).join('') || '<tr><td colspan="4" style="text-align:center;color:#888;">보유 포지션 없음</td></tr>';
+  
+  const tradeRows = stats.trades.map(t => {
+    const pnlClass = t.pnl >= 0 ? 'profit' : 'loss';
+    const icon = t.pnl >= 0 ? '✅' : '❌';
+    const date = new Date(t.timestamp).toLocaleDateString('ko-KR');
+    return `
+      <tr>
+        <td>${icon} ${t.coinName}</td>
+        <td>${t.entryPrice.toLocaleString()}원</td>
+        <td>${t.exitPrice.toLocaleString()}원</td>
+        <td class="${pnlClass}">${t.pnlPercent >= 0 ? '+' : ''}${t.pnlPercent.toFixed(2)}%</td>
+        <td>${t.reason}</td>
+        <td>${date}</td>
+      </tr>
+    `;
+  }).join('') || '<tr><td colspan="6" style="text-align:center;color:#888;">거래 내역 없음</td></tr>';
+
+  return `
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🤖 자동매매 봇 대시보드</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #fff;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { text-align: center; margin-bottom: 30px; font-size: 2em; }
+    h1 span { color: #4ade80; }
+    
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    .stat-card {
+      background: rgba(255,255,255,0.1);
+      border-radius: 15px;
+      padding: 20px;
+      backdrop-filter: blur(10px);
+    }
+    .stat-card h3 { color: #888; font-size: 0.9em; margin-bottom: 10px; }
+    .stat-card .value { font-size: 2em; font-weight: bold; }
+    .stat-card .sub { color: #888; font-size: 0.85em; margin-top: 5px; }
+    
+    .profit { color: #4ade80; }
+    .loss { color: #f87171; }
+    
+    .section {
+      background: rgba(255,255,255,0.05);
+      border-radius: 15px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .section h2 { margin-bottom: 15px; font-size: 1.2em; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; }
+    
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); }
+    th { color: #888; font-weight: normal; }
+    tr:hover { background: rgba(255,255,255,0.05); }
+    
+    .period-tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .period-tab {
+      background: rgba(255,255,255,0.1);
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      color: #fff;
+      cursor: pointer;
+    }
+    .period-tab.active { background: #4ade80; color: #000; }
+    
+    .status-badge {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.85em;
+    }
+    .status-running { background: #4ade80; color: #000; }
+    .status-test { background: #fbbf24; color: #000; }
+    
+    .refresh-info {
+      text-align: center;
+      color: #666;
+      font-size: 0.85em;
+      margin-top: 20px;
+    }
+    
+    @media (max-width: 600px) {
+      .stat-card .value { font-size: 1.5em; }
+      th, td { padding: 8px; font-size: 0.9em; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🤖 자동매매 봇 <span>v5.7.3</span></h1>
+    
+    <div style="text-align:center;margin-bottom:20px;">
+      <span class="status-badge status-running">● 실행 중</span>
+      <span class="status-badge status-test">${config.AUTO_TRADE.testMode ? '🧪 테스트 모드' : '💰 실전 모드'}</span>
+    </div>
+    
+    <div class="stats-grid">
+      <div class="stat-card">
+        <h3>📊 오늘 수익</h3>
+        <div class="value ${todayStats.totalPnl >= 0 ? 'profit' : 'loss'}">
+          ${todayStats.totalPnl >= 0 ? '+' : ''}${todayStats.totalPnl.toLocaleString()}원
+        </div>
+        <div class="sub">${todayStats.totalTrades}건 거래 | 승률 ${todayStats.winRate}%</div>
+      </div>
+      
+      <div class="stat-card">
+        <h3>📈 이번 주 수익</h3>
+        <div class="value ${weekStats.totalPnl >= 0 ? 'profit' : 'loss'}">
+          ${weekStats.totalPnl >= 0 ? '+' : ''}${weekStats.totalPnl.toLocaleString()}원
+        </div>
+        <div class="sub">${weekStats.totalTrades}건 거래 | 승률 ${weekStats.winRate}%</div>
+      </div>
+      
+      <div class="stat-card">
+        <h3>📆 이번 달 수익</h3>
+        <div class="value ${monthStats.totalPnl >= 0 ? 'profit' : 'loss'}">
+          ${monthStats.totalPnl >= 0 ? '+' : ''}${monthStats.totalPnl.toLocaleString()}원
+        </div>
+        <div class="sub">${monthStats.totalTrades}건 거래 | 승률 ${monthStats.winRate}%</div>
+      </div>
+      
+      <div class="stat-card">
+        <h3>🏆 전체 성과</h3>
+        <div class="value ${stats.totalPnl >= 0 ? 'profit' : 'loss'}">
+          ${stats.totalPnl >= 0 ? '+' : ''}${stats.totalPnl.toLocaleString()}원
+        </div>
+        <div class="sub">${stats.wins}승 ${stats.losses}패 | 평균 ${stats.avgPnlPercent}%</div>
+      </div>
+    </div>
+    
+    <div class="stats-grid">
+      <div class="stat-card">
+        <h3>🎯 승률</h3>
+        <div class="value">${stats.winRate}%</div>
+        <div class="sub">${stats.wins}승 ${stats.losses}패</div>
+      </div>
+      
+      <div class="stat-card">
+        <h3>💰 최대 수익</h3>
+        <div class="value profit">+${stats.maxWin}%</div>
+      </div>
+      
+      <div class="stat-card">
+        <h3>📉 최대 손실</h3>
+        <div class="value loss">${stats.maxLoss}%</div>
+      </div>
+      
+      <div class="stat-card">
+        <h3>📊 현재 포지션</h3>
+        <div class="value">${positions.size}개</div>
+        <div class="sub">최대 ${config.AUTO_TRADE.maxPositions}개</div>
+      </div>
+    </div>
+    
+    <div class="section">
+      <h2>💼 보유 포지션</h2>
+      <table>
+        <thead>
+          <tr><th>코인</th><th>진입가</th><th>투자금</th><th>손익</th></tr>
+        </thead>
+        <tbody>${positionRows}</tbody>
+      </table>
+    </div>
+    
+    <div class="section">
+      <h2>📜 최근 거래 내역</h2>
+      <table>
+        <thead>
+          <tr><th>코인</th><th>진입가</th><th>청산가</th><th>손익</th><th>사유</th><th>날짜</th></tr>
+        </thead>
+        <tbody>${tradeRows}</tbody>
+      </table>
+    </div>
+    
+    <div class="refresh-info">
+      마지막 업데이트: ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}
+      <br>페이지 새로고침으로 최신 정보 확인
+    </div>
+  </div>
+</body>
+</html>
+  `;
+};
+
 const server = http.createServer((req, res) => {
+  const url = req.url.split('?')[0];
+  
+  // 대시보드 페이지
+  if (url === '/' || url === '/dashboard') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(generateDashboardHTML());
+    return;
+  }
+  
+  // API: 통계
+  if (url === '/api/stats') {
+    const period = req.url.includes('period=') 
+      ? req.url.split('period=')[1].split('&')[0] 
+      : 'all';
+    const stats = trader.getStatistics(period);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(stats, null, 2));
+    return;
+  }
+  
+  // API: 상태
+  if (url === '/api/status') {
+    const traderStatus = trader.getStatus();
+    const wsStatus = websocket.getStatus();
+    
+    const status = {
+      status: 'running',
+      version: '5.7.3',
+      analysisCount,
+      coinsMonitored: watchCoins.length,
+      lastUpdate: lastUpdate ? lastUpdate.toISOString() : null,
+      uptime: process.uptime(),
+      autoTrade: {
+        enabled: config.AUTO_TRADE.enabled,
+        testMode: config.AUTO_TRADE.testMode,
+        positions: traderStatus.positionCount,
+        dailyPnL: traderStatus.dailyPnL,
+      },
+      websocket: {
+        connected: wsStatus.isConnected,
+        subscribedCoins: wsStatus.subscribedMarkets,
+        recentSpikes: wsStatus.recentSpikes
+      }
+    };
+    
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(status, null, 2));
+    return;
+  }
+  
+  // 기본: 상태 JSON
   const traderStatus = trader.getStatus();
   const wsStatus = websocket.getStatus();
   
   const status = {
     status: 'running',
-    version: '5.7.0',
+    version: '5.7.3',
     analysisCount,
     coinsMonitored: watchCoins.length,
     lastUpdate: lastUpdate ? lastUpdate.toISOString() : null,
@@ -47,6 +322,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log(`🌐 서버 실행 중: 포트 ${PORT}`);
+  console.log(`📊 대시보드: http://localhost:${PORT}/`);
 });
 
 // ============================================
@@ -550,18 +826,17 @@ const sendStartupMessage = async () => {
   const autoTradeStatus = autoTradeConfig.enabled ? '✅' : '❌';
   const testModeStatus = autoTradeConfig.testMode ? '🧪 테스트' : '💰 실전';
     
-  const message = `🤖 *자동매매 봇 v5.7.3 시작!*\n\n` +
+  const message = `🤖 *자동매매 봇 v5.7.4 시작!*\n\n` +
     `📌 모니터링: ${watchCoins.length}개 코인\n` +
     `💰 거래대금 필터: ${volumeFilterStatus}\n\n` +
     `🤖 *자동매매 ${autoTradeStatus}*\n` +
     `• 모드: ${testModeStatus}\n` +
     `• 1회 매수: ${autoTradeConfig.maxInvestPerTrade.toLocaleString()}원\n` +
     `• 최대 포지션: ${autoTradeConfig.maxPositions}개\n\n` +
-    `🆕 *v5.7.3 안정성 강화:*\n` +
-    `• 📊 RSI 라이브러리 통일\n` +
-    `• 🛡️ 매도 슬리피지 분할\n` +
-    `• 📉 거래량 다이버전스 감지\n` +
-    `• 🔌 웹소켓 실시간 감지\n\n` +
+    `🆕 *v5.7.4 대시보드:*\n` +
+    `• 🌐 웹 대시보드 추가\n` +
+    `• 📱 /stats /positions /history\n` +
+    `• 📊 일간/주간/월간 통계\n\n` +
     `🖥 서버: Render.com (24시간)\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
   
@@ -594,12 +869,134 @@ const handleVolumeSpike = async (spikeData) => {
 // 거래량 급등 정보 저장 (알림 통합용)
 const lastVolumeSpike = new Map();
 
+// ============================================
+// 📱 텔레그램 명령어 등록
+// ============================================
+
+const registerTelegramCommands = () => {
+  const { registerCommand, startCommandPolling } = require('./telegram');
+  
+  // /stats - 통계 보기
+  registerCommand('stats', async (args) => {
+    const period = args[0] || 'all';
+    const stats = trader.getStatistics(period);
+    const periodName = {
+      'today': '오늘',
+      'week': '이번 주',
+      'month': '이번 달',
+      'all': '전체'
+    }[period] || '전체';
+    
+    const message = `📊 *${periodName} 매매 통계*\n\n` +
+      `💰 총 손익: ${stats.totalPnl >= 0 ? '+' : ''}${stats.totalPnl.toLocaleString()}원\n` +
+      `📈 수익률: ${stats.totalPnlPercent}%\n\n` +
+      `🎯 승률: ${stats.winRate}% (${stats.wins}승 ${stats.losses}패)\n` +
+      `📊 평균 수익률: ${stats.avgPnlPercent}%\n` +
+      `🚀 최대 수익: +${stats.maxWin}%\n` +
+      `📉 최대 손실: ${stats.maxLoss}%\n\n` +
+      `💡 /stats today|week|month 로 기간 지정`;
+    
+    await sendTelegramMessage(message);
+  });
+  
+  // /positions - 현재 포지션
+  registerCommand('positions', async () => {
+    const positions = trader.getPositions();
+    
+    if (positions.size === 0) {
+      await sendTelegramMessage('📂 현재 보유 포지션이 없습니다.');
+      return;
+    }
+    
+    let message = `📂 *현재 포지션 (${positions.size}개)*\n\n`;
+    
+    for (const [market, pos] of positions) {
+      const holdingHours = ((Date.now() - new Date(pos.entryTime).getTime()) / (1000 * 60 * 60)).toFixed(1);
+      message += `💰 *${pos.coinName}*\n`;
+      message += `   진입가: ${pos.entryPrice.toLocaleString()}원\n`;
+      message += `   투자금: ${pos.investAmount.toLocaleString()}원\n`;
+      message += `   보유시간: ${holdingHours}시간\n\n`;
+    }
+    
+    await sendTelegramMessage(message);
+  });
+  
+  // /history - 최근 거래 내역
+  registerCommand('history', async (args) => {
+    const count = parseInt(args[0]) || 5;
+    const stats = trader.getStatistics('all');
+    const trades = stats.trades.slice(0, count);
+    
+    if (trades.length === 0) {
+      await sendTelegramMessage('📜 거래 내역이 없습니다.');
+      return;
+    }
+    
+    let message = `📜 *최근 거래 내역 (${trades.length}개)*\n\n`;
+    
+    trades.forEach((t, i) => {
+      const icon = t.pnl >= 0 ? '✅' : '❌';
+      const date = new Date(t.timestamp).toLocaleDateString('ko-KR');
+      message += `${icon} ${t.coinName}: ${t.pnlPercent >= 0 ? '+' : ''}${t.pnlPercent.toFixed(2)}%\n`;
+      message += `   ${t.reason} (${date})\n\n`;
+    });
+    
+    message += `💡 /history 10 으로 더 많이 보기`;
+    
+    await sendTelegramMessage(message);
+  });
+  
+  // /status - 봇 상태
+  registerCommand('status', async () => {
+    const traderStatus = trader.getStatus();
+    const wsStatus = websocket.getStatus();
+    const uptime = process.uptime();
+    const hours = Math.floor(uptime / 3600);
+    const mins = Math.floor((uptime % 3600) / 60);
+    
+    const message = `🤖 *봇 상태*\n\n` +
+      `📊 버전: v5.7.4\n` +
+      `⏱ 가동시간: ${hours}시간 ${mins}분\n` +
+      `📈 분석 횟수: ${analysisCount}회\n` +
+      `👀 모니터링: ${watchCoins.length}개 코인\n\n` +
+      `🤖 *자동매매*\n` +
+      `• 모드: ${config.AUTO_TRADE.testMode ? '🧪 테스트' : '💰 실전'}\n` +
+      `• 포지션: ${traderStatus.positionCount}/${config.AUTO_TRADE.maxPositions}개\n` +
+      `• 오늘 손익: ${traderStatus.dailyPnL >= 0 ? '+' : ''}${traderStatus.dailyPnL.toLocaleString()}원\n\n` +
+      `🔌 *웹소켓*\n` +
+      `• 연결: ${wsStatus.isConnected ? '✅' : '❌'}\n` +
+      `• 구독: ${wsStatus.subscribedMarkets}개`;
+    
+    await sendTelegramMessage(message);
+  });
+  
+  // /help - 도움말
+  registerCommand('help', async () => {
+    const message = `📖 *명령어 도움말*\n\n` +
+      `/stats - 전체 통계\n` +
+      `/stats today - 오늘 통계\n` +
+      `/stats week - 이번주 통계\n` +
+      `/stats month - 이번달 통계\n\n` +
+      `/positions - 현재 포지션\n` +
+      `/history - 최근 거래 5개\n` +
+      `/history 10 - 최근 거래 10개\n\n` +
+      `/status - 봇 상태\n` +
+      `/help - 이 도움말\n\n` +
+      `🌐 웹 대시보드도 확인해보세요!`;
+    
+    await sendTelegramMessage(message);
+  });
+  
+  // 명령어 폴링 시작
+  startCommandPolling();
+};
+
 // 메인 실행
 const main = async () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
-║  🚀 암호화폐 자동매매 봇 v5.7.3                       ║
-║  RSI 일관성 + 매도 슬리피지 분할 + 거래량 감지        ║
+║  🚀 암호화폐 자동매매 봇 v5.7.4                       ║
+║  웹 대시보드 + 텔레그램 명령어 추가                   ║
 ║  Render.com 배포 버전                                ║
 ╚══════════════════════════════════════════════════════╝
   `);
@@ -631,6 +1028,9 @@ const main = async () => {
     await websocket.initialize(watchCoins);
     websocket.setVolumeSpikeCallback(handleVolumeSpike);
   }
+  
+  // 📱 텔레그램 명령어 등록
+  registerTelegramCommands();
 
   // 시작 메시지 발송
   await sendStartupMessage();

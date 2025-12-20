@@ -10,6 +10,9 @@ const CHAT_ID = process.env.TELEGRAM_CHAT_ID || config.TELEGRAM_CHAT_ID;
 
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
+// 마지막 업데이트 ID (중복 처리 방지)
+let lastUpdateId = 0;
+
 // 메시지 발송 (기본)
 const sendTelegramMessage = async (text, parseMode = 'Markdown') => {
   try {
@@ -92,9 +95,64 @@ const sendErrorAlert = async (errorMessage) => {
   return sendTelegramMessage(text);
 };
 
+// ============================================
+// 📱 텔레그램 명령어 처리
+// ============================================
+
+// 명령어 핸들러 저장
+let commandHandlers = {};
+
+// 명령어 등록
+const registerCommand = (command, handler) => {
+  commandHandlers[command] = handler;
+};
+
+// 업데이트 폴링
+const pollUpdates = async () => {
+  try {
+    const response = await fetch(`${TELEGRAM_API}/getUpdates?offset=${lastUpdateId + 1}&timeout=5`);
+    const data = await response.json();
+    
+    if (!data.ok || !data.result) return;
+    
+    for (const update of data.result) {
+      lastUpdateId = update.update_id;
+      
+      if (update.message && update.message.text) {
+        const text = update.message.text;
+        const chatId = update.message.chat.id;
+        
+        // 허용된 채팅에서만 명령어 처리
+        if (chatId.toString() !== CHAT_ID.toString()) continue;
+        
+        // 명령어 파싱
+        if (text.startsWith('/')) {
+          const parts = text.split(' ');
+          const command = parts[0].replace('/', '').replace('@', ' ').split(' ')[0];
+          const args = parts.slice(1);
+          
+          if (commandHandlers[command]) {
+            await commandHandlers[command](args);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    // 폴링 오류 무시 (연결 끊김 등)
+  }
+};
+
+// 명령어 폴링 시작
+const startCommandPolling = () => {
+  console.log('📱 텔레그램 명령어 폴링 시작');
+  setInterval(pollUpdates, 3000); // 3초마다 체크
+};
+
 module.exports = {
   sendTelegramMessage,
   sendTelegramMessageWithButtons,
   sendTelegramAlert,
-  sendErrorAlert
+  sendErrorAlert,
+  registerCommand,
+  startCommandPolling,
 };
