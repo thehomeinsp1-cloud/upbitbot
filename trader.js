@@ -608,15 +608,23 @@ const monitorPositions = async () => {
 const sendBuyNotification = async (position, analysis) => {
   const testTag = position.testMode ? '🧪 [테스트] ' : '';
   
+  // 거래량 급등 정보 확인
+  let volumeSpikeInfo = '';
+  if (analysis && analysis.volumeSpike) {
+    volumeSpikeInfo = `⚡ *거래량 급등!* (평균 ${analysis.volumeSpike.spikeRatio}배)\n\n`;
+  }
+  
   const message = `${testTag}🟢 *자동 매수 완료!*\n\n` +
     `💰 *${position.coinName}*\n\n` +
+    volumeSpikeInfo +
     `📊 매수 정보:\n` +
     `• 진입가: ${position.entryPrice.toLocaleString()}원\n` +
     `• 투자금: ${position.investAmount.toLocaleString()}원\n` +
     `• 점수: ${position.score}점\n\n` +
     `🛡️ 리스크 관리:\n` +
-    `• 손절가: ${position.stopLoss.toLocaleString()}원 (-${config.AUTO_TRADE.stopLossPercent}%)\n` +
-    `• 목표가: ${position.takeProfit.toLocaleString()}원 (+${config.AUTO_TRADE.takeProfitPercent}%)\n\n` +
+    `• 손절가: ${Math.round(position.stopLoss).toLocaleString()}원 (-${config.AUTO_TRADE.stopLossPercent}%)\n` +
+    `• 목표가: ${Math.round(position.takeProfit).toLocaleString()}원 (+${config.AUTO_TRADE.takeProfitPercent}%)\n` +
+    `• ATR 트레일링: ${position.trailingStopPercent?.toFixed(1) || 3}%\n\n` +
     `📈 현재 포지션: ${positions.size}/${config.AUTO_TRADE.maxPositions}개\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
 

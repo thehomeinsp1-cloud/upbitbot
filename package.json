@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
-  "version": "5.7.0",
-  "description": "암호화폐 자동매매 봇 - 웹소켓 실시간 + ATR 트레일링 + BTC MA20",
+  "version": "5.7.1",
+  "description": "암호화폐 자동매매 봇 - 웹소켓 실시간 + 알림 통합",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

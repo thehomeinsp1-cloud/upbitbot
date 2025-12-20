@@ -156,6 +156,11 @@ const analyzeAndAlert = async (market, styleKey = null, styleConfig = null) => {
         // 🤖 자동매매 실행 (단타 스타일만)
         if (config.AUTO_TRADE.enabled && (!styleKey || styleKey === 'daytrading')) {
           try {
+            // 거래량 급등 정보 추가
+            const volumeSpike = getVolumeSpikeInfo(market);
+            if (volumeSpike) {
+              analysis.volumeSpike = volumeSpike;
+            }
             await trader.executeBuy(market, analysis);
           } catch (tradeError) {
             log(`⚠️ 자동매매 오류: ${tradeError.message}`);
@@ -171,6 +176,19 @@ const analyzeAndAlert = async (market, styleKey = null, styleConfig = null) => {
   }
 };
 
+// 거래량 급등 정보 가져오기
+const getVolumeSpikeInfo = (market) => {
+  if (!lastVolumeSpike.has(market)) return null;
+  
+  const spike = lastVolumeSpike.get(market);
+  // 5분 이내 급등 정보만 유효
+  if (Date.now() - spike.timestamp > 5 * 60 * 1000) {
+    lastVolumeSpike.delete(market);
+    return null;
+  }
+  return spike;
+};
+
 // 알림 메시지 포맷 (멀티 스타일 지원)
 const formatAlertMessage = (analysis) => {
   const coinName = analysis.market.replace('KRW-', '');
@@ -179,7 +197,18 @@ const formatAlertMessage = (analysis) => {
   
   // 스타일 표시
   const styleName = analysis.tradingStyle || '⚡ 단타';
-  let message = `🚀 *${coinName} ${styleName} 매수 신호!*\n\n`;
+  
+  // 거래량 급등 체크
+  const volumeSpike = getVolumeSpikeInfo(analysis.market);
+  const spikeTag = volumeSpike ? ' ⚡급등' : '';
+  
+  let message = `🚀 *${coinName} ${styleName} 매수 신호!${spikeTag}*\n\n`;
+  
+  // 거래량 급등 정보 표시
+  if (volumeSpike) {
+    message += `⚡ *거래량 급등 감지!*\n`;
+    message += `• 평균 대비 ${volumeSpike.spikeRatio}배\n\n`;
+  }
   
   // 분석 소스 표시 (바이낸스 또는 CoinGecko)
   if (analysis.analysisSource === 'binance') {
@@ -521,17 +550,16 @@ const sendStartupMessage = async () => {
   const autoTradeStatus = autoTradeConfig.enabled ? '✅' : '❌';
   const testModeStatus = autoTradeConfig.testMode ? '🧪 테스트' : '💰 실전';
     
-  const message = `🤖 *자동매매 봇 v5.7 시작!*\n\n` +
+  const message = `🤖 *자동매매 봇 v5.7.1 시작!*\n\n` +
     `📌 모니터링: ${watchCoins.length}개 코인\n` +
     `💰 거래대금 필터: ${volumeFilterStatus}\n\n` +
     `🤖 *자동매매 ${autoTradeStatus}*\n` +
     `• 모드: ${testModeStatus}\n` +
     `• 1회 매수: ${autoTradeConfig.maxInvestPerTrade.toLocaleString()}원\n` +
     `• 최대 포지션: ${autoTradeConfig.maxPositions}개\n\n` +
-    `🆕 *v5.7 실시간 업그레이드:*\n` +
-    `• 🔌 웹소켓 실시간 체결\n` +
-    `• ⚡ 거래량 급등 즉시 감지\n` +
-    `• 📊 3배 거래량 시 즉시 분석\n` +
+    `🆕 *v5.7.1 알림 통합:*\n` +
+    `• 🔌 웹소켓 실시간 감지\n` +
+    `• ⚡ 거래량 급등 → 매수 알림에 통합\n` +
     `• 💾 포지션 영구 저장\n` +
     `• 🛡️ ATR 트레일링 스탑\n\n` +
     `🖥 서버: Render.com (24시간)\n` +
@@ -548,31 +576,30 @@ const handleVolumeSpike = async (spikeData) => {
   console.log(`\n⚡ 급등 감지! ${coinName} 즉시 분석 시작...`);
   
   try {
-    // 즉시 분석 실행
-    const analysis = await analyzeAndAlert(market);
+    // 급등 정보를 전역 변수에 저장 (알림에 포함용)
+    lastVolumeSpike.set(market, {
+      spikeRatio,
+      tradePrice,
+      timestamp: Date.now()
+    });
     
-    if (analysis && parseFloat(analysis.scorePercent) >= 70) {
-      // 점수가 70점 이상이면 텔레그램 알림
-      await sendTelegramMessage(
-        `⚡ *거래량 급등 감지!*\n\n` +
-        `💰 ${coinName}\n` +
-        `📊 거래량: 평균 대비 ${spikeRatio}배\n` +
-        `💵 현재가: ${tradePrice.toLocaleString()}원\n` +
-        `🎯 분석 점수: ${analysis.scorePercent}점\n\n` +
-        `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`
-      );
-    }
+    // 즉시 분석 실행 (analyzeAndAlert에서 자동매수 및 알림 처리)
+    await analyzeAndAlert(market);
+    
   } catch (error) {
     console.error(`❌ 급등 분석 오류: ${error.message}`);
   }
 };
 
+// 거래량 급등 정보 저장 (알림 통합용)
+const lastVolumeSpike = new Map();
+
 // 메인 실행
 const main = async () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
-║  🚀 암호화폐 자동매매 봇 v5.7                         ║
-║  웹소켓 실시간 + ATR 트레일링 + BTC MA20 안전장치     ║
+║  🚀 암호화폐 자동매매 봇 v5.7.1                       ║
+║  웹소켓 실시간 + 알림 통합 + ATR 트레일링             ║
 ║  Render.com 배포 버전                                ║
 ╚══════════════════════════════════════════════════════╝
   `);
