@@ -1,9 +1,14 @@
 /**
  * 📈 기술적 지표 계산 모듈
- * 바이낸스 기준 분석 + 업비트 가격 표시
+ * technicalindicators 라이브러리 활용 + 바이낸스 기준 분석
  */
 
 const config = require('./config');
+
+// ============================================
+// 📊 기술적 지표 라이브러리 (정확도 향상)
+// ============================================
+const { RSI, EMA, SMA, MACD, BollingerBands, Stochastic, ADX, ATR, MFI, OBV } = require('technicalindicators');
 
 // ============================================
 // CoinGecko API (바이낸스 가격 대체)

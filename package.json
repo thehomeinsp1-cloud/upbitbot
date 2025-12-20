@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
-  "version": "5.4.0",
-  "description": "암호화폐 자동매매 봇 - 신호분석 + 자동 매수/매도",
+  "version": "5.5.0",
+  "description": "암호화폐 자동매매 봇 - Fear&Greed + 트레일링스탑 + 슬리피지방어",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

@@ -1,6 +1,6 @@
 /**
- * 🚀 암호화폐 통합 매수 신호 알림 봇 + 자동매매
- * 업비트 API + 기술적 지표 분석 + 텔레그램 알림
+ * 🚀 암호화폐 자동매매 봇 v5.5
+ * 업비트 API + 기술적 지표 + Fear & Greed + 자동매매
  * Render.com 배포 버전
  */
 
@@ -8,7 +8,7 @@ const http = require('http');
 const config = require('./config');
 const { analyzeMarket, getMarketSummary, fetchAllKRWMarkets } = require('./indicators');
 const { sendTelegramMessage, sendTelegramAlert } = require('./telegram');
-const { fetchCoinNews, fetchMarketNews, getSentimentText } = require('./news');
+const { fetchCoinNews, fetchMarketNews, getSentimentText, fetchFearGreedIndex, adjustScoreByFearGreed } = require('./news');
 const trader = require('./trader');
 
 // ============================================
@@ -352,6 +352,12 @@ const runFullAnalysis = async () => {
     await trader.monitorPositions();
   }
   
+  // 📊 Fear & Greed Index 조회
+  const fearGreedData = await fetchFearGreedIndex();
+  if (fearGreedData) {
+    log(`📊 시장 심리: ${fearGreedData.value} (${fearGreedData.classification} ${fearGreedData.emoji})`);
+  }
+  
   // 김치 프리미엄 과열 체크 (분석 시작 시)
   await checkKimchiPremiumAlert();
 
@@ -486,7 +492,7 @@ const sendStartupMessage = async () => {
   const autoTradeStatus = autoTradeConfig.enabled ? '✅' : '❌';
   const testModeStatus = autoTradeConfig.testMode ? '🧪 테스트' : '💰 실전';
     
-  const message = `🤖 *자동매매 봇 v5.4 시작!*\n\n` +
+  const message = `🤖 *자동매매 봇 v5.5 시작!*\n\n` +
     `📌 모니터링: ${watchCoins.length}개 코인\n` +
     `💰 거래대금 필터: ${volumeFilterStatus}\n\n` +
     `🤖 *자동매매 ${autoTradeStatus}*\n` +
@@ -495,11 +501,11 @@ const sendStartupMessage = async () => {
     `• 최대 포지션: ${autoTradeConfig.maxPositions}개\n` +
     `• 손절: -${autoTradeConfig.stopLossPercent}%\n` +
     `• 익절: +${autoTradeConfig.takeProfitPercent}%\n\n` +
-    `🛡️ *리스크 관리:*\n` +
-    `• 일일 손실 한도: ${autoTradeConfig.dailyLossLimit.toLocaleString()}원\n` +
-    `• 총 투자 한도: ${autoTradeConfig.maxTotalInvest.toLocaleString()}원\n\n` +
-    `📰 *뉴스 분석:*\n` +
-    `• CryptoPanic + 코인니스 ✅\n\n` +
+    `🆕 *v5.5 신규 기능:*\n` +
+    `• Fear & Greed Index 📊\n` +
+    `• 트레일링 스탑 🎯\n` +
+    `• 슬리피지 방어 🛡️\n` +
+    `• 라이브러리 지표 계산\n\n` +
     `🖥 서버: Render.com (24시간)\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
   
@@ -511,8 +517,8 @@ const sendStartupMessage = async () => {
 const main = async () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
-║  🚀 암호화폐 자동매매 봇 v5.4                         ║
-║  신호 분석 + 자동 매수/매도 + 리스크 관리             ║
+║  🚀 암호화폐 자동매매 봇 v5.5                         ║
+║  Fear & Greed + 트레일링 스탑 + 슬리피지 방어         ║
 ║  Render.com 배포 버전                                ║
 ╚══════════════════════════════════════════════════════╝
   `);

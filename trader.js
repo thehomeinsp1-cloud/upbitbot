@@ -51,7 +51,17 @@ const executeBuy = async (market, analysis) => {
     // 3. 매수 금액 결정
     const investAmount = Math.min(tradeConfig.maxInvestPerTrade, canBuy.availableKRW);
     
-    // 4. 매수 실행
+    // 4. 슬리피지 체크 (호가창 확인)
+    if (!tradeConfig.testMode) {
+      const slippageCheck = await upbit.checkSlippage(market, investAmount);
+      if (!slippageCheck.safe) {
+        console.log(`⚠️ ${coinName} ${slippageCheck.reason}`);
+        return null;
+      }
+      console.log(`✅ ${coinName} ${slippageCheck.reason}`);
+    }
+    
+    // 5. 매수 실행
     console.log(`\n${'='.repeat(40)}`);
     console.log(`🟢 자동 매수 시작: ${coinName}`);
     console.log(`   점수: ${analysis.scorePercent}점`);
@@ -61,7 +71,7 @@ const executeBuy = async (market, analysis) => {
 
     const order = await upbit.buyMarket(market, investAmount);
     
-    // 5. 포지션 기록
+    // 6. 포지션 기록 (트레일링 스탑용 highPrice 추가)
     const position = {
       market,
       coinName,
@@ -71,6 +81,8 @@ const executeBuy = async (market, analysis) => {
       quantity: investAmount / currentPrice,
       stopLoss: currentPrice * (1 - tradeConfig.stopLossPercent / 100),
       takeProfit: currentPrice * (1 + tradeConfig.takeProfitPercent / 100),
+      highPrice: currentPrice,           // 트레일링 스탑용: 최고가 추적
+      trailingActivated: false,          // 트레일링 스탑 활성화 여부
       score: analysis.scorePercent,
       orderId: order.uuid,
       testMode: order.testMode || false,
@@ -78,17 +90,17 @@ const executeBuy = async (market, analysis) => {
     
     positions.set(market, position);
     
-    // 6. 쿨다운 설정
+    // 7. 쿨다운 설정
     buyCooldowns.set(market, Date.now());
     
-    // 7. 매매 기록
+    // 8. 매매 기록
     tradeHistory.push({
       type: 'BUY',
       ...position,
       timestamp: new Date(),
     });
 
-    // 8. 텔레그램 알림
+    // 9. 텔레그램 알림
     await sendBuyNotification(position, analysis);
     
     console.log(`✅ ${coinName} 매수 완료!`);
@@ -258,25 +270,52 @@ const monitorPositions = async () => {
       
       console.log(`   ${position.coinName}: ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}% (${currentPrice.toLocaleString()}원)`);
       
-      // 손절 체크
+      // 1. 손절 체크
       if (currentPrice <= position.stopLoss) {
+        const lossPercent = ((position.stopLoss / position.entryPrice) - 1) * 100;
         console.log(`   🔴 ${position.coinName} 손절가 도달!`);
-        await executeSell(market, '손절 (-3%)', currentPrice);
+        await executeSell(market, `손절 (${lossPercent.toFixed(1)}%)`, currentPrice);
         continue;
       }
       
-      // 익절 체크
-      if (currentPrice >= position.takeProfit) {
+      // 2. 고정 익절 체크 (트레일링 비활성 시)
+      if (!position.trailingActivated && currentPrice >= position.takeProfit) {
         console.log(`   🟢 ${position.coinName} 익절가 도달!`);
-        await executeSell(market, '익절 (+10%)', currentPrice);
+        await executeSell(market, `익절 (+${config.AUTO_TRADE.takeProfitPercent}%)`, currentPrice);
         continue;
       }
       
-      // 트레일링 스탑 (선택적)
-      // 5% 이상 수익 시 손절가를 본절로 이동
-      if (pnlPercent >= 5 && position.stopLoss < position.entryPrice) {
+      // 3. 트레일링 스탑 로직
+      // - 5% 이상 수익: 트레일링 활성화 + 손절가를 본절로
+      // - 이후 고점 대비 3% 하락 시 매도 (추세 끝까지 추적)
+      
+      if (pnlPercent >= 5) {
+        // 최고가 갱신
+        if (currentPrice > position.highPrice) {
+          position.highPrice = currentPrice;
+          console.log(`   📈 ${position.coinName} 최고가 갱신: ${currentPrice.toLocaleString()}원`);
+        }
+        
+        // 트레일링 활성화
+        if (!position.trailingActivated) {
+          position.trailingActivated = true;
+          position.stopLoss = position.entryPrice; // 본절로 이동
+          console.log(`   🎯 ${position.coinName} 트레일링 스탑 활성화! (본절 보장)`);
+        }
+        
+        // 고점 대비 3% 하락 시 매도
+        const dropFromHigh = ((position.highPrice - currentPrice) / position.highPrice) * 100;
+        if (dropFromHigh >= 3) {
+          const finalPnl = ((currentPrice / position.entryPrice) - 1) * 100;
+          console.log(`   📉 ${position.coinName} 고점 대비 ${dropFromHigh.toFixed(1)}% 하락!`);
+          await executeSell(market, `트레일링 스탑 (+${finalPnl.toFixed(1)}%)`, currentPrice);
+          continue;
+        }
+      }
+      // 3% 이상 수익 시 손절가를 본절로 (안전장치)
+      else if (pnlPercent >= 3 && position.stopLoss < position.entryPrice) {
         position.stopLoss = position.entryPrice;
-        console.log(`   📈 ${position.coinName} 손절가 본절로 이동`);
+        console.log(`   🛡️ ${position.coinName} 손절가 본절로 이동 (3% 수익 달성)`);
       }
       
     } catch (error) {

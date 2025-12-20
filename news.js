@@ -467,11 +467,98 @@ const getSentimentText = (score, sentiment) => {
   }
 };
 
+// ============================================
+// 📊 Fear & Greed Index (시장 심리 지수)
+// ============================================
+
+let fearGreedCache = null;
+let fearGreedCacheTime = 0;
+const FEAR_GREED_CACHE_DURATION = 30 * 60 * 1000; // 30분 캐시
+
+const fetchFearGreedIndex = async () => {
+  const now = Date.now();
+  
+  // 캐시 확인
+  if (fearGreedCache && (now - fearGreedCacheTime) < FEAR_GREED_CACHE_DURATION) {
+    return fearGreedCache;
+  }
+  
+  try {
+    const response = await fetch('https://api.alternative.me/fng/?limit=1');
+    const data = await response.json();
+    
+    if (data.data && data.data[0]) {
+      const fng = data.data[0];
+      const value = parseInt(fng.value);
+      
+      // 분류
+      let classification = '';
+      let emoji = '';
+      let tradingBias = 0; // -1 ~ +1 (매도 ~ 매수 편향)
+      
+      if (value <= 25) {
+        classification = '극도의 공포';
+        emoji = '😱';
+        tradingBias = 0.3;  // 역발상 매수 기회
+      } else if (value <= 45) {
+        classification = '공포';
+        emoji = '😨';
+        tradingBias = 0.1;
+      } else if (value <= 55) {
+        classification = '중립';
+        emoji = '😐';
+        tradingBias = 0;
+      } else if (value <= 75) {
+        classification = '탐욕';
+        emoji = '😀';
+        tradingBias = -0.1;
+      } else {
+        classification = '극도의 탐욕';
+        emoji = '🤑';
+        tradingBias = -0.3; // 역발상 매도/비중 축소
+      }
+      
+      fearGreedCache = {
+        value,
+        classification,
+        emoji,
+        tradingBias,
+        timestamp: fng.timestamp,
+        updated: new Date().toISOString()
+      };
+      fearGreedCacheTime = now;
+      
+      console.log(`📊 Fear & Greed: ${value} (${classification} ${emoji})`);
+      return fearGreedCache;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Fear & Greed Index 조회 실패:', error.message);
+    return fearGreedCache; // 이전 캐시 반환
+  }
+};
+
+// Fear & Greed에 따른 점수 조정
+const adjustScoreByFearGreed = (score, fearGreedData) => {
+  if (!fearGreedData) return score;
+  
+  const { value, tradingBias } = fearGreedData;
+  
+  // 극도의 공포 (0-25): 점수 +10% 보너스 (역발상 매수)
+  // 극도의 탐욕 (75-100): 점수 -10% 페널티 (과열 주의)
+  const adjustment = score * tradingBias * 0.1;
+  
+  return Math.max(0, Math.min(100, score + adjustment));
+};
+
 module.exports = {
   fetchCoinNews,
   fetchMarketNews,
   getSentimentText,
   getGlobalSymbol,
   fetchCoinnessNews,
+  fetchFearGreedIndex,
+  adjustScoreByFearGreed,
   analyzeCoinnessForCoin
 };

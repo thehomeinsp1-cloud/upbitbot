@@ -231,6 +231,61 @@ const getTicker = async (market) => {
 };
 
 // ============================================
+// 📖 호가창 조회 (슬리피지 방어용)
+// ============================================
+
+const getOrderbook = async (market) => {
+  try {
+    const response = await fetch(`${UPBIT_API}/orderbook?markets=${market}`);
+    const data = await response.json();
+    return data[0];
+  } catch (error) {
+    console.error('호가창 조회 실패:', error.message);
+    return null;
+  }
+};
+
+// 슬리피지 체크: 매수 금액이 1호가 잔량의 일정 비율 이하인지 확인
+const checkSlippage = async (market, investAmount, maxRatio = 0.2) => {
+  try {
+    const orderbook = await getOrderbook(market);
+    if (!orderbook || !orderbook.orderbook_units) {
+      return { safe: true, reason: '호가창 조회 실패, 진행' };
+    }
+    
+    // 매도 1호가 (우리가 사려는 가격)
+    const askUnit = orderbook.orderbook_units[0];
+    const askPrice = askUnit.ask_price;     // 매도 호가
+    const askSize = askUnit.ask_size;       // 매도 잔량
+    const askTotalKRW = askPrice * askSize; // 1호가 총 금액
+    
+    // 매수 금액이 1호가 잔량의 maxRatio(20%) 이하인지 체크
+    const ratio = investAmount / askTotalKRW;
+    
+    if (ratio > maxRatio) {
+      return {
+        safe: false,
+        reason: `슬리피지 위험: 매수금액(${investAmount.toLocaleString()}원)이 1호가 잔량(${askTotalKRW.toLocaleString()}원)의 ${(ratio * 100).toFixed(1)}% > ${maxRatio * 100}%`,
+        askPrice,
+        askTotalKRW,
+        ratio
+      };
+    }
+    
+    return {
+      safe: true,
+      askPrice,
+      askTotalKRW,
+      ratio,
+      reason: `슬리피지 안전: ${(ratio * 100).toFixed(1)}%`
+    };
+  } catch (error) {
+    console.error('슬리피지 체크 실패:', error.message);
+    return { safe: true, reason: '체크 실패, 진행' };
+  }
+};
+
+// ============================================
 // 🔐 API 연결 테스트
 // ============================================
 
@@ -260,5 +315,7 @@ module.exports = {
   getOpenOrders,
   cancelOrder,
   getTicker,
+  getOrderbook,
+  checkSlippage,
   testConnection,
 };
