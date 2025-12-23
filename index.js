@@ -844,18 +844,90 @@ const sendStartupMessage = async () => {
   log(`🚀 봇 시작 완료!`);
 };
 
-// 거래량 급등 시 즉시 분석 실행
+// 거래량 급등 시 즉시 분석 실행 (v5.8 옵션 A: RSI + 고점 필터)
 const handleVolumeSpike = async (spikeData) => {
   const { market, coinName, tradePrice, spikeRatio } = spikeData;
   
-  console.log(`\n⚡ 급등 감지! ${coinName} 즉시 분석 시작...`);
+  console.log(`\n⚡ 급등 감지! ${coinName} 필터 체크 중...`);
   
   try {
+    const spikeFilter = config.SPIKE_FILTER || { enabled: true, maxRSI: 65, minDistanceFromHigh: 2 };
+    
+    // 급등 필터 비활성화 시 바로 분석 진행
+    if (!spikeFilter.enabled) {
+      console.log(`   ℹ️ 급등 필터 비활성화 → 바로 분석 진행`);
+      lastVolumeSpike.set(market, { spikeRatio, tradePrice, timestamp: Date.now(), blocked: false });
+      await analyzeAndAlert(market);
+      return;
+    }
+    
+    // ============================================
+    // 🛡️ 옵션 A: 급등 필터 (고점 매수 방지)
+    // ============================================
+    
+    // 1. RSI 체크 (과매수 방지)
+    const rsi = await trader.fetchRSI(market);
+    if (rsi !== null) {
+      console.log(`   📊 ${coinName} RSI: ${rsi.toFixed(1)}`);
+      
+      if (rsi > spikeFilter.maxRSI) {
+        console.log(`   ⛔ ${coinName} RSI ${rsi.toFixed(1)} > ${spikeFilter.maxRSI} → 급등 매수 차단 (과매수)`);
+        await sendTelegramMessage(
+          `⚡ *급등 감지 but 매수 차단*\n\n` +
+          `💰 ${coinName}\n` +
+          `📊 RSI: ${rsi.toFixed(1)} (> ${spikeFilter.maxRSI} 과매수)\n` +
+          `📈 거래량: 평균 ${spikeRatio}배\n\n` +
+          `⛔ 고점 매수 위험 → 자동매수 차단`
+        );
+        // 알림만 보내고 자동매수 없이 종료
+        lastVolumeSpike.set(market, {
+          spikeRatio,
+          tradePrice,
+          timestamp: Date.now(),
+          blocked: true,
+          blockReason: `RSI ${rsi.toFixed(1)} > ${spikeFilter.maxRSI}`
+        });
+        return;
+      }
+    }
+    
+    // 2. 최근 고점 대비 체크 (고점 근처 매수 방지)
+    const recentHigh = await fetchRecentHigh(market);
+    if (recentHigh) {
+      const distanceFromHigh = ((recentHigh - tradePrice) / recentHigh) * 100;
+      console.log(`   📈 ${coinName} 최근 고점: ${recentHigh.toLocaleString()}원 (현재가 대비 ${distanceFromHigh.toFixed(1)}% 아래)`);
+      
+      if (distanceFromHigh < spikeFilter.minDistanceFromHigh) {
+        console.log(`   ⛔ ${coinName} 고점 근처 (${distanceFromHigh.toFixed(1)}% < ${spikeFilter.minDistanceFromHigh}%) → 급등 매수 차단`);
+        await sendTelegramMessage(
+          `⚡ *급등 감지 but 매수 차단*\n\n` +
+          `💰 ${coinName}\n` +
+          `📊 고점 대비: ${distanceFromHigh.toFixed(1)}% (< ${spikeFilter.minDistanceFromHigh}% 위험)\n` +
+          `📈 거래량: 평균 ${spikeRatio}배\n\n` +
+          `⛔ 고점 매수 위험 → 자동매수 차단`
+        );
+        lastVolumeSpike.set(market, {
+          spikeRatio,
+          tradePrice,
+          timestamp: Date.now(),
+          blocked: true,
+          blockReason: `고점 근처 ${distanceFromHigh.toFixed(1)}%`
+        });
+        return;
+      }
+    }
+    
+    // ============================================
+    // ✅ 필터 통과 → 정상 분석 및 자동매수 진행
+    // ============================================
+    console.log(`   ✅ ${coinName} 급등 필터 통과! 분석 시작...`);
+    
     // 급등 정보를 전역 변수에 저장 (알림에 포함용)
     lastVolumeSpike.set(market, {
       spikeRatio,
       tradePrice,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      blocked: false
     });
     
     // 즉시 분석 실행 (analyzeAndAlert에서 자동매수 및 알림 처리)
@@ -863,6 +935,23 @@ const handleVolumeSpike = async (spikeData) => {
     
   } catch (error) {
     console.error(`❌ 급등 분석 오류: ${error.message}`);
+  }
+};
+
+// 최근 고점 조회 (24시간 내)
+const fetchRecentHigh = async (market) => {
+  try {
+    const response = await fetch(`https://api.upbit.com/v1/candles/minutes/60?market=${market}&count=24`);
+    const candles = await response.json();
+    
+    if (!candles || candles.length === 0) return null;
+    
+    // 24시간 내 최고가
+    const highPrices = candles.map(c => c.high_price);
+    return Math.max(...highPrices);
+  } catch (error) {
+    console.error(`고점 조회 실패 (${market}):`, error.message);
+    return null;
   }
 };
 

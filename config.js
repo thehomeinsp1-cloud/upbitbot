@@ -25,6 +25,13 @@ module.exports = {
   USE_WEBSOCKET: true,           // 웹소켓 실시간 모니터링
   VOLUME_SPIKE_MULTIPLIER: 3.0,  // 거래량 급등 기준 (평균 대비 배수)
   SPIKE_ANALYSIS_THRESHOLD: 70,  // 급등 시 분석 알림 기준 점수
+  
+  // 🛡️ 급등 필터 설정 (v5.8 옵션 A)
+  SPIKE_FILTER: {
+    enabled: true,               // 급등 필터 활성화
+    maxRSI: 65,                  // RSI가 이 값 이상이면 매수 차단
+    minDistanceFromHigh: 2,      // 고점 대비 최소 이격도 (%)
+  },
 
   // ============================================
   // 🤖 자동매매 설정
