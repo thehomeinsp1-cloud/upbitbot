@@ -1,7 +1,7 @@
 /**
- * 🤖 자동매매 트레이더 모듈
+ * 🤖 자동매매 트레이더 모듈 v5.8
  * 매수/매도 결정 및 포지션 관리 + 영구 저장
- * 옵션 C: 동적 익절 전략 (RSI 기반 부분 익절 + 거래량 감소 감지 + 트레일링)
+ * 조기 익절 시스템: 1.5% 본전 이동 + 2%/4% 단계별 부분 익절
  */
 
 const fs = require('fs');
@@ -559,6 +559,47 @@ const monitorPositions = async () => {
       }
       
       // ============================================
+      // 1.3️⃣ 조기 본전 이동 (1.5% 수익 시) - v5.8 신규!
+      // ============================================
+      const earlyConfig = config.AUTO_TRADE.earlyProfit;
+      if (earlyConfig?.enabled && pnlPercent >= earlyConfig.breakEvenAt && !position.breakEvenMoved) {
+        position.breakEvenMoved = true;
+        position.stopLoss = position.entryPrice * 1.001; // 본전 + 0.1% (수수료 커버)
+        savePositions();
+        console.log(`   🛡️ ${position.coinName} 조기 본전 이동! (+${pnlPercent.toFixed(1)}% 달성)`);
+        
+        await sendTelegramMessage(
+          `🛡️ *손절선 본전 이동!*\n\n` +
+          `💰 ${position.coinName}\n` +
+          `📈 현재 수익: +${pnlPercent.toFixed(1)}%\n` +
+          `🎯 손절선: ${Math.round(position.stopLoss).toLocaleString()}원\n\n` +
+          `💡 이제 손실 없이 안전하게 보유 중!`
+        );
+      }
+      
+      // ============================================
+      // 1.4️⃣ 조기 1차 익절 (2% 수익 시 30% 매도) - v5.8 신규!
+      // ============================================
+      if (earlyConfig?.enabled && pnlPercent >= earlyConfig.firstTakeAt && !position.earlyFirstTaken) {
+        position.earlyFirstTaken = true;
+        savePositions();
+        console.log(`   💰 ${position.coinName} 1차 조기 익절! (+${pnlPercent.toFixed(1)}%)`);
+        await executePartialSell(market, earlyConfig.firstTakeRatio, `1차 조기 익절 (+${pnlPercent.toFixed(1)}%)`, currentPrice);
+        continue;
+      }
+      
+      // ============================================
+      // 1.45️⃣ 조기 2차 익절 (4% 수익 시 추가 50% 매도) - v5.8 신규!
+      // ============================================
+      if (earlyConfig?.enabled && pnlPercent >= earlyConfig.secondTakeAt && position.earlyFirstTaken && !position.earlySecondTaken) {
+        position.earlySecondTaken = true;
+        savePositions();
+        console.log(`   💰 ${position.coinName} 2차 조기 익절! (+${pnlPercent.toFixed(1)}%)`);
+        await executePartialSell(market, earlyConfig.secondTakeRatio, `2차 조기 익절 (+${pnlPercent.toFixed(1)}%)`, currentPrice);
+        continue;
+      }
+      
+      // ============================================
       // 1.5️⃣ 목표가 도달 시 전량 익절! (신규)
       // ============================================
       if (currentPrice >= position.takeProfit) {
@@ -568,9 +609,9 @@ const monitorPositions = async () => {
       }
       
       // ============================================
-      // 1.6️⃣ 안전 익절 (7% 이상이면 무조건 50% 익절)
+      // 1.6️⃣ 안전 익절 (5% 이상이면 무조건 50% 익절) - 조건 완화!
       // ============================================
-      if (pnlPercent >= 7 && !position.safeProfitTaken) {
+      if (pnlPercent >= 5 && !position.safeProfitTaken) {  // 7% → 5%
         console.log(`   💰 ${position.coinName} 안전 익절! (+${pnlPercent.toFixed(1)}%)`);
         position.safeProfitTaken = true;
         savePositions();
@@ -579,9 +620,9 @@ const monitorPositions = async () => {
       }
       
       // ============================================
-      // 2️⃣ RSI 기반 부분 익절 (옵션 C 핵심!)
+      // 2️⃣ RSI 기반 부분 익절 (조건 완화!)
       // ============================================
-      if (pnlPercent >= 5) {
+      if (pnlPercent >= 3) {  // 5% → 3%로 하향
         const rsi = await fetchRSI(market);
         
         if (rsi !== null) {
@@ -590,22 +631,22 @@ const monitorPositions = async () => {
           // 부분 익절 카운트 초기화
           const partialSellCount = position.partialSellCount || 0;
           
-          // RSI > 75: 1차 부분 익절 (30%)
-          if (rsi > 75 && partialSellCount === 0 && pnlPercent >= 5) {
+          // RSI > 70: 1차 부분 익절 (30%) - 조건 완화 (75 → 70)
+          if (rsi > 70 && partialSellCount === 0 && pnlPercent >= 3) {  // 5% → 3%
             console.log(`   🟡 ${position.coinName} RSI 과매수 1단계! (RSI: ${rsi.toFixed(1)})`);
             await executePartialSell(market, 0.3, `RSI 과매수 1단계 (${rsi.toFixed(0)})`, currentPrice);
             continue;
           }
           
-          // RSI > 80: 2차 부분 익절 (추가 30% = 전체의 42.9%)
-          if (rsi > 80 && partialSellCount === 1 && pnlPercent >= 7) {
+          // RSI > 75: 2차 부분 익절 (추가 30% = 전체의 42.9%) - 조건 완화 (80 → 75)
+          if (rsi > 75 && partialSellCount === 1 && pnlPercent >= 4) {  // 7% → 4%
             console.log(`   🟡 ${position.coinName} RSI 과매수 2단계! (RSI: ${rsi.toFixed(1)})`);
             await executePartialSell(market, 0.429, `RSI 과매수 2단계 (${rsi.toFixed(0)})`, currentPrice);
             continue;
           }
           
-          // RSI > 85: 전량 익절 (극단적 과매수)
-          if (rsi > 85 && pnlPercent >= 10) {
+          // RSI > 80: 전량 익절 (극단적 과매수) - 조건 완화 (85 → 80)
+          if (rsi > 80 && pnlPercent >= 5) {  // 10% → 5%
             console.log(`   🟢 ${position.coinName} RSI 극단적 과매수! 전량 익절`);
             await executeSell(market, `RSI 극단 과매수 (${rsi.toFixed(0)})`, currentPrice);
             continue;
@@ -653,20 +694,20 @@ const monitorPositions = async () => {
       }
       
       // ============================================
-      // 3️⃣ 시간 기반 익절 (24시간 보유 + 3% 이상)
+      // 3️⃣ 시간 기반 익절 (12시간 보유 + 2% 이상) - 조건 완화!
       // ============================================
-      if (holdingHours >= 24 && pnlPercent >= 3) {
-        console.log(`   ⏰ ${position.coinName} 24시간 보유 + 수익 → 익절`);
-        await executeSell(market, `시간 익절 (24h, +${pnlPercent.toFixed(1)}%)`, currentPrice);
+      if (holdingHours >= 12 && pnlPercent >= 2) {  // 24시간/3% → 12시간/2%
+        console.log(`   ⏰ ${position.coinName} 12시간 보유 + 수익 → 익절`);
+        await executeSell(market, `시간 익절 (12h, +${pnlPercent.toFixed(1)}%)`, currentPrice);
         continue;
       }
       
       // ============================================
-      // 4️⃣ 트레일링 스탑 (나머지 40%)
+      // 4️⃣ 트레일링 스탑 (나머지 물량)
       // ============================================
       const trailingPercent = position.trailingStopPercent || 3;
       
-      if (pnlPercent >= 5) {
+      if (pnlPercent >= 3) {  // 5% → 3%로 하향
         // 최고가 갱신
         if (currentPrice > position.highPrice) {
           position.highPrice = currentPrice;

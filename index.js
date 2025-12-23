@@ -1,6 +1,6 @@
 /**
- * 🚀 암호화폐 자동매매 봇 v5.7
- * 웹소켓 실시간 + ATR 트레일링 + BTC MA20 안전장치
+ * 🚀 암호화폐 자동매매 봇 v5.8
+ * 웹소켓 실시간 + ATR 트레일링 + 조기 익절 시스템
  * Render.com 배포 버전
  */
 
@@ -146,7 +146,7 @@ const generateDashboardHTML = () => {
 </head>
 <body>
   <div class="container">
-    <h1>🤖 자동매매 봇 <span>v5.7.7</span></h1>
+    <h1>🤖 자동매매 봇 <span>v5.8.0</span></h1>
     
     <div style="text-align:center;margin-bottom:20px;">
       <span class="status-badge status-running">● 실행 중</span>
@@ -826,14 +826,14 @@ const sendStartupMessage = async () => {
   const autoTradeStatus = autoTradeConfig.enabled ? '✅' : '❌';
   const testModeStatus = autoTradeConfig.testMode ? '🧪 테스트' : '💰 실전';
     
-  const message = `🤖 *자동매매 봇 v5.7.7 시작!*\n\n` +
+  const message = `🤖 *자동매매 봇 v5.8.0 시작!*\n\n` +
     `📌 모니터링: ${watchCoins.length}개 코인\n` +
     `💰 거래대금 필터: ${volumeFilterStatus}\n\n` +
     `🤖 *자동매매 ${autoTradeStatus}*\n` +
     `• 모드: ${testModeStatus}\n` +
     `• 1회 매수: ${autoTradeConfig.maxInvestPerTrade.toLocaleString()}원\n` +
     `• 최대 포지션: ${autoTradeConfig.maxPositions}개\n\n` +
-    `🆕 *v5.7.7 대시보드:*\n` +
+    `🆕 *v5.8.0 대시보드:*\n` +
     `• 🌐 웹 대시보드 추가\n` +
     `• 📱 /stats /positions /history\n` +
     `• 📊 일간/주간/월간 통계\n\n` +
@@ -955,7 +955,7 @@ const registerTelegramCommands = () => {
     const mins = Math.floor((uptime % 3600) / 60);
     
     const message = `🤖 *봇 상태*\n\n` +
-      `📊 버전: v5.7.7\n` +
+      `📊 버전: v5.8.0\n` +
       `⏱ 가동시간: ${hours}시간 ${mins}분\n` +
       `📈 분석 횟수: ${analysisCount}회\n` +
       `👀 모니터링: ${watchCoins.length}개 코인\n\n` +
@@ -995,7 +995,7 @@ const registerTelegramCommands = () => {
 const main = async () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
-║  🚀 암호화폐 자동매매 봇 v5.7.7                       ║
+║  🚀 암호화폐 자동매매 봇 v5.8.0                       ║
 ║  웹 대시보드 + 텔레그램 명령어 추가                   ║
 ║  Render.com 배포 버전                                ║
 ╚══════════════════════════════════════════════════════╝

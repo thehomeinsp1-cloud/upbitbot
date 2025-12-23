@@ -1,6 +1,6 @@
 /**
- * ⚙️ 설정 파일 v5.7
- * 웹소켓 실시간 + 자동매매 + 멀티타임프레임 + 뉴스분석
+ * ⚙️ 설정 파일 v5.8
+ * 웹소켓 실시간 + 자동매매 + 조기 익절 시스템
  */
 
 module.exports = {
@@ -41,8 +41,18 @@ module.exports = {
     
     // 🛡️ 리스크 관리
     stopLossPercent: 3,         // 손절 -3%
-    takeProfitPercent: 9,       // 익절 +9% (10% 미만)
+    takeProfitPercent: 6,       // 익절 +6% (현실적 목표)
     dailyLossLimit: 300000,     // 일일 손실 한도 (30만원)
+    
+    // 🎯 조기 익절 설정 (v5.8 신규!)
+    earlyProfit: {
+      enabled: true,            // 조기 익절 활성화
+      breakEvenAt: 1.5,         // 1.5% 수익 시 손절선을 본전으로
+      firstTakeAt: 2.0,         // 2% 도달 시 30% 부분 익절
+      secondTakeAt: 4.0,        // 4% 도달 시 추가 30% 부분 익절
+      firstTakeRatio: 0.3,      // 1차 익절 비율 (30%)
+      secondTakeRatio: 0.5,     // 2차 익절 비율 (남은 것의 50% = 전체 35%)
+    },
     
     // ⏱ 매매 조건
     minScore: 78,               // 최소 매수 점수
