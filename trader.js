@@ -74,10 +74,35 @@ const executePartialSell = async (market, sellRatio, reason, currentPrice) => {
   const sellQuantity = position.quantity * sellRatio;
   const remainQuantity = position.quantity * (1 - sellRatio);
   
+  // ============================================
+  // 🛡️ 최소 금액 체크 (업비트 최소 주문: 5,000원)
+  // ============================================
+  const MIN_ORDER_AMOUNT = 5500; // 5,000원 + 여유분
+  const remainValue = remainQuantity * currentPrice;
+  const sellValue = sellQuantity * currentPrice;
+  
+  // 남은 금액이 최소 주문 금액 미만이면 → 전량 매도로 전환
+  if (remainValue < MIN_ORDER_AMOUNT && remainValue > 0) {
+    console.log(`\n⚠️ ${coinName} 부분 익절 후 잔액 ${Math.round(remainValue).toLocaleString()}원 < ${MIN_ORDER_AMOUNT.toLocaleString()}원`);
+    console.log(`   → 전량 익절로 전환!`);
+    
+    // 전량 매도로 전환 (executeSell 호출)
+    return await executeSell(market, `${reason} (잔액 부족 → 전량)`, currentPrice);
+  }
+  
+  // 매도 금액이 최소 주문 금액 미만이면 → 매도 스킵
+  if (sellValue < MIN_ORDER_AMOUNT) {
+    console.log(`\n⚠️ ${coinName} 매도 금액 ${Math.round(sellValue).toLocaleString()}원 < ${MIN_ORDER_AMOUNT.toLocaleString()}원`);
+    console.log(`   → 부분 익절 스킵 (금액 부족)`);
+    return null;
+  }
+  
   try {
     console.log(`\n${'='.repeat(40)}`);
     console.log(`🟡 부분 매도 시작: ${coinName} (${(sellRatio * 100).toFixed(0)}%)`);
     console.log(`   사유: ${reason}`);
+    console.log(`   매도 금액: ${Math.round(sellValue).toLocaleString()}원`);
+    console.log(`   남은 금액: ${Math.round(remainValue).toLocaleString()}원`);
     console.log(`${'='.repeat(40)}`);
 
     // 테스트 모드
@@ -908,6 +933,7 @@ module.exports = {
   fetchRSI,
   getTradeHistory,
   getStatistics,
+  getScoreBasedStats,
 };
 
 // ============================================
@@ -975,5 +1001,101 @@ function getStatistics(period = 'all') {
     maxWin: maxWin.toFixed(2),
     maxLoss: maxLoss.toFixed(2),
     trades: sellTrades.slice(-20).reverse() // 최근 20개
+  };
+}
+
+// ============================================
+// 📊 점수별 승률 통계 (v5.8 신규!)
+// ============================================
+
+function getScoreBasedStats() {
+  const now = new Date();
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  
+  // 7일 내 거래만
+  const recentTrades = tradeHistory.filter(t => new Date(t.timestamp) >= weekAgo);
+  
+  // 매수 기록에서 점수 가져오기 (매수 → 매도 매칭)
+  const buyTrades = recentTrades.filter(t => t.type === 'BUY');
+  const sellTrades = recentTrades.filter(t => t.type === 'SELL');
+  
+  // 점수 구간별 통계
+  const scoreRanges = [
+    { min: 85, max: 100, label: '85점 이상' },
+    { min: 80, max: 84, label: '80-84점' },
+    { min: 78, max: 79, label: '78-79점' },
+    { min: 75, max: 77, label: '75-77점' },
+    { min: 0, max: 74, label: '74점 이하' }
+  ];
+  
+  const result = scoreRanges.map(range => {
+    // 해당 점수 구간의 매수 기록
+    const rangebuys = buyTrades.filter(t => {
+      const score = parseInt(t.score) || 0;
+      return score >= range.min && score <= range.max;
+    });
+    
+    // 해당 매수에 대응하는 매도 기록 찾기
+    const matchedSells = [];
+    rangebuys.forEach(buy => {
+      const sell = sellTrades.find(s => 
+        s.market === buy.market && 
+        new Date(s.timestamp) > new Date(buy.timestamp)
+      );
+      if (sell) {
+        matchedSells.push({ ...sell, score: buy.score });
+      }
+    });
+    
+    const wins = matchedSells.filter(t => t.pnl >= 0).length;
+    const losses = matchedSells.filter(t => t.pnl < 0).length;
+    const total = matchedSells.length;
+    const winRate = total > 0 ? ((wins / total) * 100).toFixed(1) : '-';
+    const avgPnl = total > 0 
+      ? (matchedSells.reduce((sum, t) => sum + t.pnlPercent, 0) / total).toFixed(2)
+      : '-';
+    
+    return {
+      label: range.label,
+      min: range.min,
+      total,
+      wins,
+      losses,
+      winRate,
+      avgPnl
+    };
+  });
+  
+  // 현재 설정된 최소 점수
+  const minScore = config.AUTO_TRADE?.minScore || 78;
+  
+  // 최소 점수 이상의 종합 통계
+  const minScoreTrades = buyTrades.filter(t => (parseInt(t.score) || 0) >= minScore);
+  const minScoreSells = [];
+  minScoreTrades.forEach(buy => {
+    const sell = sellTrades.find(s => 
+      s.market === buy.market && 
+      new Date(s.timestamp) > new Date(buy.timestamp)
+    );
+    if (sell) {
+      minScoreSells.push({ ...sell, score: buy.score });
+    }
+  });
+  
+  const overallWins = minScoreSells.filter(t => t.pnl >= 0).length;
+  const overallTotal = minScoreSells.length;
+  
+  return {
+    ranges: result,
+    minScore,
+    overall: {
+      total: overallTotal,
+      wins: overallWins,
+      losses: overallTotal - overallWins,
+      winRate: overallTotal > 0 ? ((overallWins / overallTotal) * 100).toFixed(1) : '-',
+      avgPnl: overallTotal > 0 
+        ? (minScoreSells.reduce((sum, t) => sum + t.pnlPercent, 0) / overallTotal).toFixed(2)
+        : '-'
+    }
   };
 }

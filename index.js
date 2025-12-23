@@ -25,6 +25,7 @@ const generateDashboardHTML = () => {
   const weekStats = trader.getStatistics('week');
   const monthStats = trader.getStatistics('month');
   const positions = trader.getPositions();
+  const scoreStats = trader.getScoreBasedStats();
   
   const positionRows = Array.from(positions.entries()).map(([market, pos]) => {
     const pnl = pos.currentPrice ? ((pos.currentPrice / pos.entryPrice - 1) * 100).toFixed(2) : '0.00';
@@ -54,6 +55,21 @@ const generateDashboardHTML = () => {
       </tr>
     `;
   }).join('') || '<tr><td colspan="6" style="text-align:center;color:#888;">거래 내역 없음</td></tr>';
+  
+  // 점수별 승률 테이블 생성
+  const scoreRows = scoreStats.ranges.map(r => {
+    const winRateClass = r.winRate !== '-' && parseFloat(r.winRate) >= 50 ? 'profit' : (r.winRate !== '-' ? 'loss' : '');
+    const avgPnlClass = r.avgPnl !== '-' && parseFloat(r.avgPnl) >= 0 ? 'profit' : (r.avgPnl !== '-' ? 'loss' : '');
+    return `
+      <tr>
+        <td><strong>${r.label}</strong></td>
+        <td>${r.total}건</td>
+        <td>${r.wins}승 ${r.losses}패</td>
+        <td class="${winRateClass}">${r.winRate}${r.winRate !== '-' ? '%' : ''}</td>
+        <td class="${avgPnlClass}">${r.avgPnl !== '-' ? (parseFloat(r.avgPnl) >= 0 ? '+' : '') + r.avgPnl + '%' : '-'}</td>
+      </tr>
+    `;
+  }).join('');
 
   return `
 <!DOCTYPE html>
@@ -151,6 +167,37 @@ const generateDashboardHTML = () => {
     <div style="text-align:center;margin-bottom:20px;">
       <span class="status-badge status-running">● 실행 중</span>
       <span class="status-badge status-test">${config.AUTO_TRADE.testMode ? '🧪 테스트 모드' : '💰 실전 모드'}</span>
+    </div>
+    
+    <!-- 🎯 점수별 적중률 (7일) -->
+    <div class="section" style="background: linear-gradient(135deg, rgba(74,222,128,0.1) 0%, rgba(59,130,246,0.1) 100%); border: 1px solid rgba(74,222,128,0.3);">
+      <h2>🎯 점수별 적중률 (최근 7일)</h2>
+      <div style="display:flex;flex-wrap:wrap;gap:15px;margin-bottom:15px;">
+        <div style="flex:1;min-width:200px;background:rgba(0,0,0,0.2);padding:15px;border-radius:10px;">
+          <div style="color:#888;font-size:0.85em;">현재 매수 기준</div>
+          <div style="font-size:1.8em;font-weight:bold;color:#4ade80;">${scoreStats.minScore}점 이상</div>
+        </div>
+        <div style="flex:1;min-width:200px;background:rgba(0,0,0,0.2);padding:15px;border-radius:10px;">
+          <div style="color:#888;font-size:0.85em;">7일간 총 거래</div>
+          <div style="font-size:1.8em;font-weight:bold;">${scoreStats.overall.total}건</div>
+        </div>
+        <div style="flex:1;min-width:200px;background:rgba(0,0,0,0.2);padding:15px;border-radius:10px;">
+          <div style="color:#888;font-size:0.85em;">적중률</div>
+          <div style="font-size:1.8em;font-weight:bold;" class="${scoreStats.overall.winRate !== '-' && parseFloat(scoreStats.overall.winRate) >= 50 ? 'profit' : 'loss'}">${scoreStats.overall.winRate}${scoreStats.overall.winRate !== '-' ? '%' : ''}</div>
+          <div style="color:#888;font-size:0.85em;">${scoreStats.overall.wins}승 ${scoreStats.overall.losses}패</div>
+        </div>
+        <div style="flex:1;min-width:200px;background:rgba(0,0,0,0.2);padding:15px;border-radius:10px;">
+          <div style="color:#888;font-size:0.85em;">평균 수익률</div>
+          <div style="font-size:1.8em;font-weight:bold;" class="${scoreStats.overall.avgPnl !== '-' && parseFloat(scoreStats.overall.avgPnl) >= 0 ? 'profit' : 'loss'}">${scoreStats.overall.avgPnl !== '-' ? (parseFloat(scoreStats.overall.avgPnl) >= 0 ? '+' : '') + scoreStats.overall.avgPnl + '%' : '-'}</div>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>점수 구간</th><th>거래 수</th><th>승/패</th><th>적중률</th><th>평균 수익</th></tr>
+        </thead>
+        <tbody>${scoreRows}</tbody>
+      </table>
+      <div style="color:#666;font-size:0.8em;margin-top:10px;">💡 점수가 높을수록 적중률이 높아야 정상입니다. 데이터가 쌓이면 최적 매수 기준을 찾는 데 활용하세요.</div>
     </div>
     
     <div class="stats-grid">
@@ -872,14 +919,7 @@ const handleVolumeSpike = async (spikeData) => {
       
       if (rsi > spikeFilter.maxRSI) {
         console.log(`   ⛔ ${coinName} RSI ${rsi.toFixed(1)} > ${spikeFilter.maxRSI} → 급등 매수 차단 (과매수)`);
-        await sendTelegramMessage(
-          `⚡ *급등 감지 but 매수 차단*\n\n` +
-          `💰 ${coinName}\n` +
-          `📊 RSI: ${rsi.toFixed(1)} (> ${spikeFilter.maxRSI} 과매수)\n` +
-          `📈 거래량: 평균 ${spikeRatio}배\n\n` +
-          `⛔ 고점 매수 위험 → 자동매수 차단`
-        );
-        // 알림만 보내고 자동매수 없이 종료
+        // 알림 없이 차단만 (알림 피로도 방지)
         lastVolumeSpike.set(market, {
           spikeRatio,
           tradePrice,
@@ -899,13 +939,7 @@ const handleVolumeSpike = async (spikeData) => {
       
       if (distanceFromHigh < spikeFilter.minDistanceFromHigh) {
         console.log(`   ⛔ ${coinName} 고점 근처 (${distanceFromHigh.toFixed(1)}% < ${spikeFilter.minDistanceFromHigh}%) → 급등 매수 차단`);
-        await sendTelegramMessage(
-          `⚡ *급등 감지 but 매수 차단*\n\n` +
-          `💰 ${coinName}\n` +
-          `📊 고점 대비: ${distanceFromHigh.toFixed(1)}% (< ${spikeFilter.minDistanceFromHigh}% 위험)\n` +
-          `📈 거래량: 평균 ${spikeRatio}배\n\n` +
-          `⛔ 고점 매수 위험 → 자동매수 차단`
-        );
+        // 알림 없이 차단만 (알림 피로도 방지)
         lastVolumeSpike.set(market, {
           spikeRatio,
           tradePrice,
