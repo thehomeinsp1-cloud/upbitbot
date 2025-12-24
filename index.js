@@ -1017,6 +1017,47 @@ const lastVolumeSpike = new Map();
 const pullbackCooldowns = new Map();
 
 // ============================================
+// ⚡ 급등 감지 병렬 처리 시스템 (v5.8.1)
+// ============================================
+const spikeQueue = [];
+let isProcessingSpikes = false;
+const SPIKE_BATCH_DELAY = 500; // 0.5초 동안 급등 모음
+
+// 급등 큐에 추가
+const queueVolumeSpike = (spikeData) => {
+  spikeQueue.push(spikeData);
+  
+  // 처리 중이 아니면 배치 처리 시작
+  if (!isProcessingSpikes) {
+    isProcessingSpikes = true;
+    setTimeout(processSpikeBatch, SPIKE_BATCH_DELAY);
+  }
+};
+
+// 배치로 급등 처리 (최대 3개 병렬)
+const processSpikeBatch = async () => {
+  if (spikeQueue.length === 0) {
+    isProcessingSpikes = false;
+    return;
+  }
+  
+  // 큐에서 최대 3개 꺼내기
+  const batch = spikeQueue.splice(0, 3);
+  
+  console.log(`\n⚡ 급등 배치 처리: ${batch.length}개 동시 분석`);
+  
+  // 병렬 처리
+  await Promise.all(batch.map(spikeData => handleVolumeSpike(spikeData)));
+  
+  // 남은 큐가 있으면 계속 처리
+  if (spikeQueue.length > 0) {
+    setTimeout(processSpikeBatch, 300); // 다음 배치
+  } else {
+    isProcessingSpikes = false;
+  }
+};
+
+// ============================================
 // 🎯 눌림목 스캔 (v5.8.1 신규!)
 // ============================================
 const scanPullbackOpportunities = async () => {
@@ -1296,7 +1337,7 @@ const main = async () => {
   // 🔌 웹소켓 실시간 모니터링 초기화
   if (config.USE_WEBSOCKET !== false) {
     await websocket.initialize(watchCoins);
-    websocket.setVolumeSpikeCallback(handleVolumeSpike);
+    websocket.setVolumeSpikeCallback(queueVolumeSpike); // 병렬 처리를 위해 큐에 추가
   }
   
   // 📱 텔레그램 명령어 등록
