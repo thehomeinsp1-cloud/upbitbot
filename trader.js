@@ -252,6 +252,53 @@ const loadTradeHistory = () => {
   }
 };
 
+// 🗑️ 거래 기록 초기화 (v5.8 신규!)
+const resetTradeHistory = () => {
+  try {
+    // 메모리 초기화
+    tradeHistory.length = 0;
+    dailyPnL = 0;
+    
+    // 파일 초기화
+    fs.writeFileSync(TRADE_HISTORY_FILE, JSON.stringify([], null, 2));
+    
+    console.log('🗑️ 거래 기록 초기화 완료!');
+    return true;
+  } catch (error) {
+    console.error('거래 기록 초기화 실패:', error.message);
+    return false;
+  }
+};
+
+// 🗑️ 전체 초기화 (포지션 + 거래 기록)
+const resetAll = () => {
+  try {
+    // 포지션 초기화
+    positions.clear();
+    dailyPnL = 0;
+    lastResetDate = new Date().toDateString();
+    
+    // 거래 기록 초기화
+    tradeHistory.length = 0;
+    
+    // 파일 초기화
+    const emptyPositions = {
+      positions: {},
+      dailyPnL: 0,
+      lastResetDate: new Date().toDateString(),
+      savedAt: new Date().toISOString()
+    };
+    fs.writeFileSync(POSITIONS_FILE, JSON.stringify(emptyPositions, null, 2));
+    fs.writeFileSync(TRADE_HISTORY_FILE, JSON.stringify([], null, 2));
+    
+    console.log('🗑️ 전체 초기화 완료! (포지션 + 거래 기록)');
+    return true;
+  } catch (error) {
+    console.error('전체 초기화 실패:', error.message);
+    return false;
+  }
+};
+
 // ============================================
 // 📊 포지션 관리
 // ============================================
@@ -934,6 +981,8 @@ module.exports = {
   getTradeHistory,
   getStatistics,
   getScoreBasedStats,
+  resetTradeHistory,
+  resetAll,
 };
 
 // ============================================
@@ -960,8 +1009,11 @@ function getStatistics(period = 'all') {
     filteredTrades = tradeHistory.filter(t => new Date(t.timestamp) >= monthAgo);
   }
   
-  // 매도 거래만 (수익 계산용)
-  const sellTrades = filteredTrades.filter(t => t.type === 'SELL');
+  // 매도 거래 (SELL + PARTIAL_SELL 모두 포함)
+  const sellTrades = filteredTrades.filter(t => t.type === 'SELL' || t.type === 'PARTIAL_SELL');
+  
+  // 완료된 거래만 (전량 매도 기준으로 승/패 계산)
+  const completedTrades = filteredTrades.filter(t => t.type === 'SELL');
   
   if (sellTrades.length === 0) {
     return {
@@ -979,28 +1031,100 @@ function getStatistics(period = 'all') {
     };
   }
   
-  const wins = sellTrades.filter(t => t.pnl >= 0);
-  const losses = sellTrades.filter(t => t.pnl < 0);
-  const totalPnl = sellTrades.reduce((sum, t) => sum + t.pnl, 0);
-  const totalInvest = sellTrades.reduce((sum, t) => sum + (t.entryPrice * t.quantity), 0);
-  const avgPnlPercent = sellTrades.reduce((sum, t) => sum + t.pnlPercent, 0) / sellTrades.length;
+  // 💰 총 손익: 모든 매도(부분+전량)의 pnl 합계
+  const totalPnl = sellTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
   
-  const pnlPercents = sellTrades.map(t => t.pnlPercent);
-  const maxWin = Math.max(...pnlPercents, 0);
-  const maxLoss = Math.min(...pnlPercents, 0);
+  // 📊 승/패: 완료된 거래 기준 (같은 코인의 부분익절+전량매도 합산)
+  // 코인별로 그룹화하여 총 손익 계산
+  const tradesByMarket = new Map();
+  
+  filteredTrades.forEach(t => {
+    if (t.type === 'BUY') {
+      // 매수 기록으로 새 거래 시작
+      if (!tradesByMarket.has(t.market)) {
+        tradesByMarket.set(t.market, []);
+      }
+      tradesByMarket.get(t.market).push({
+        market: t.market,
+        coinName: t.coinName,
+        entryPrice: t.entryPrice,
+        totalPnl: 0,
+        totalPnlPercent: 0,
+        investAmount: t.investAmount || (t.entryPrice * t.quantity),
+        sells: [],
+        completed: false,
+        timestamp: t.timestamp
+      });
+    } else if (t.type === 'PARTIAL_SELL' || t.type === 'SELL') {
+      const marketTrades = tradesByMarket.get(t.market);
+      if (marketTrades && marketTrades.length > 0) {
+        const currentTrade = marketTrades[marketTrades.length - 1];
+        currentTrade.totalPnl += (t.pnl || 0);
+        currentTrade.sells.push(t);
+        if (t.type === 'SELL') {
+          currentTrade.completed = true;
+          currentTrade.exitPrice = t.exitPrice;
+          currentTrade.reason = t.reason;
+          // 총 수익률 계산 (총손익 / 투자금)
+          currentTrade.totalPnlPercent = currentTrade.investAmount > 0 
+            ? (currentTrade.totalPnl / currentTrade.investAmount) * 100 
+            : 0;
+        }
+      }
+    }
+  });
+  
+  // 완료된 거래만 추출
+  const allCompletedTrades = [];
+  tradesByMarket.forEach(trades => {
+    trades.filter(t => t.completed).forEach(t => allCompletedTrades.push(t));
+  });
+  
+  // 승/패 계산 (총 손익 기준)
+  const wins = allCompletedTrades.filter(t => t.totalPnl >= 0);
+  const losses = allCompletedTrades.filter(t => t.totalPnl < 0);
+  
+  // 평균 수익률 계산
+  const avgPnlPercent = allCompletedTrades.length > 0
+    ? allCompletedTrades.reduce((sum, t) => sum + t.totalPnlPercent, 0) / allCompletedTrades.length
+    : 0;
+  
+  // 최대 수익/손실
+  const pnlPercents = allCompletedTrades.map(t => t.totalPnlPercent);
+  const maxWin = pnlPercents.length > 0 ? Math.max(...pnlPercents, 0) : 0;
+  const maxLoss = pnlPercents.length > 0 ? Math.min(...pnlPercents, 0) : 0;
+  
+  // 총 투자금 계산
+  const totalInvest = allCompletedTrades.reduce((sum, t) => sum + (t.investAmount || 0), 0);
+  
+  // 대시보드용 거래 내역 (완료된 거래, 최신순)
+  const displayTrades = allCompletedTrades
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    .slice(0, 20)
+    .map(t => ({
+      coinName: t.coinName,
+      entryPrice: t.entryPrice,
+      exitPrice: t.exitPrice,
+      pnl: t.totalPnl,
+      pnlPercent: t.totalPnlPercent,
+      reason: t.reason,
+      timestamp: t.timestamp
+    }));
   
   return {
     period,
-    totalTrades: sellTrades.length,
+    totalTrades: allCompletedTrades.length,
     wins: wins.length,
     losses: losses.length,
-    winRate: ((wins.length / sellTrades.length) * 100).toFixed(1),
+    winRate: allCompletedTrades.length > 0 
+      ? ((wins.length / allCompletedTrades.length) * 100).toFixed(1) 
+      : '0',
     totalPnl: Math.round(totalPnl),
-    totalPnlPercent: totalInvest > 0 ? ((totalPnl / totalInvest) * 100).toFixed(2) : 0,
+    totalPnlPercent: totalInvest > 0 ? ((totalPnl / totalInvest) * 100).toFixed(2) : '0',
     avgPnlPercent: avgPnlPercent.toFixed(2),
     maxWin: maxWin.toFixed(2),
     maxLoss: maxLoss.toFixed(2),
-    trades: sellTrades.slice(-20).reverse() // 최근 20개
+    trades: displayTrades
   };
 }
 

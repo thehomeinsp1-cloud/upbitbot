@@ -1104,10 +1104,45 @@ const registerTelegramCommands = () => {
       `/history - 최근 거래 5개\n` +
       `/history 10 - 최근 거래 10개\n\n` +
       `/status - 봇 상태\n` +
+      `/reset - 거래 기록 초기화\n` +
       `/help - 이 도움말\n\n` +
       `🌐 웹 대시보드도 확인해보세요!`;
     
     await sendTelegramMessage(message);
+  });
+  
+  // /reset - 거래 기록 초기화 (v5.8 신규!)
+  registerCommand('reset', async (args) => {
+    const option = args[0] || 'history';
+    
+    if (option === 'all') {
+      // 전체 초기화 (포지션 + 거래기록)
+      const success = trader.resetAll();
+      if (success) {
+        await sendTelegramMessage(
+          `🗑️ *전체 초기화 완료!*\n\n` +
+          `• 포지션: 삭제됨\n` +
+          `• 거래 기록: 삭제됨\n` +
+          `• 일일 손익: 0원으로 리셋\n\n` +
+          `⚠️ 새로운 거래부터 기록됩니다.`
+        );
+      } else {
+        await sendTelegramMessage('❌ 초기화 실패. 로그를 확인하세요.');
+      }
+    } else {
+      // 거래 기록만 초기화 (기본)
+      const success = trader.resetTradeHistory();
+      if (success) {
+        await sendTelegramMessage(
+          `🗑️ *거래 기록 초기화 완료!*\n\n` +
+          `• 거래 기록: 삭제됨\n` +
+          `• 포지션: 유지됨\n\n` +
+          `💡 전체 초기화: /reset all`
+        );
+      } else {
+        await sendTelegramMessage('❌ 초기화 실패. 로그를 확인하세요.');
+      }
+    }
   });
   
   // 명령어 폴링 시작

@@ -113,7 +113,12 @@ const pollUpdates = async () => {
     const response = await fetch(`${TELEGRAM_API}/getUpdates?offset=${lastUpdateId + 1}&timeout=5`);
     const data = await response.json();
     
-    if (!data.ok || !data.result) return;
+    if (!data.ok) {
+      console.error('❌ 텔레그램 폴링 실패:', data.description);
+      return;
+    }
+    
+    if (!data.result || data.result.length === 0) return;
     
     for (const update of data.result) {
       lastUpdateId = update.update_id;
@@ -126,32 +131,44 @@ const pollUpdates = async () => {
         const chatId = msg.chat.id;
         
         // 디버깅용 로그
-        console.log(`📱 텔레그램 수신: "${text}" from ${chatId}`);
+        console.log(`📱 텔레그램 수신: "${text}"`);
+        console.log(`   chat_id: ${chatId} (설정: ${CHAT_ID})`);
         
-        // 허용된 채팅에서만 명령어 처리 (문자열 비교)
-        if (String(chatId) !== String(CHAT_ID)) {
-          console.log(`   ⏭️ 채팅 ID 불일치: ${chatId} vs ${CHAT_ID}`);
+        // 채팅 ID 비교 (문자열 및 숫자 모두 허용, 음수 처리)
+        const configChatId = String(CHAT_ID).replace('-', '');
+        const msgChatId = String(chatId).replace('-', '');
+        
+        // 채팅 ID가 설정되지 않았거나 일치하면 처리
+        if (CHAT_ID && configChatId !== msgChatId && String(chatId) !== String(CHAT_ID)) {
+          console.log(`   ⏭️ 채팅 ID 불일치 - 스킵`);
           continue;
         }
         
         // 명령어 파싱
         if (text.startsWith('/')) {
           const parts = text.split(' ');
-          const command = parts[0].replace('/', '').replace('@', ' ').split(' ')[0].toLowerCase();
+          // @봇이름 제거 처리
+          const commandPart = parts[0].replace('/', '').split('@')[0].toLowerCase();
           const args = parts.slice(1);
           
-          console.log(`   🔧 명령어 실행: ${command}`);
+          console.log(`   🔧 명령어: ${commandPart}, args: ${args.join(', ')}`);
           
-          if (commandHandlers[command]) {
-            await commandHandlers[command](args);
+          if (commandHandlers[commandPart]) {
+            try {
+              await commandHandlers[commandPart](args);
+              console.log(`   ✅ 명령어 실행 완료: ${commandPart}`);
+            } catch (cmdError) {
+              console.error(`   ❌ 명령어 실행 오류: ${cmdError.message}`);
+            }
           } else {
-            console.log(`   ❓ 알 수 없는 명령어: ${command}`);
+            console.log(`   ❓ 등록되지 않은 명령어: ${commandPart}`);
+            console.log(`   📋 등록된 명령어: ${Object.keys(commandHandlers).join(', ')}`);
           }
         }
       }
     }
   } catch (error) {
-    // 폴링 오류 무시 (연결 끊김 등)
+    console.error('텔레그램 폴링 오류:', error.message);
   }
 };
 
