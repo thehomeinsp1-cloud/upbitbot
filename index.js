@@ -937,6 +937,17 @@ const handleVolumeSpike = async (spikeData) => {
         });
         return;
       }
+    } else {
+      // RSI 조회 실패 시 보수적으로 차단 (안전 우선)
+      console.log(`   ⚠️ ${coinName} RSI 조회 실패 → 급등 매수 보류 (안전 우선)`);
+      lastVolumeSpike.set(market, {
+        spikeRatio,
+        tradePrice,
+        timestamp: Date.now(),
+        blocked: true,
+        blockReason: 'RSI 조회 실패'
+      });
+      return;
     }
     
     // 2. 최근 고점 대비 체크 (고점 근처 매수 방지)

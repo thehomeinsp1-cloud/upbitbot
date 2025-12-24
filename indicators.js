@@ -1466,24 +1466,41 @@ module.exports = {
     }
   },
   
-  // 트레이더 모듈용 RSI 함수 (라이브러리 사용)
+  // 트레이더 모듈용 RSI 함수 (라이브러리 사용 + 재시도)
   fetchRSIForTrader: async (market, period = 14) => {
-    try {
-      const candles = await fetchCandles(market, 60, period + 10);
-      if (!candles || candles.length < period + 1) return null;
-      
-      const closes = candles.map(c => c.trade_price);
-      
-      // technicalindicators 라이브러리 사용 (일관성)
-      const rsiResult = RSI.calculate({
-        values: closes,
-        period: period
-      });
-      
-      return rsiResult.length > 0 ? rsiResult[rsiResult.length - 1] : null;
-    } catch (error) {
-      console.error(`RSI 조회 실패 (${market}):`, error.message);
-      return null;
+    const maxRetries = 2;
+    
+    for (let retry = 0; retry <= maxRetries; retry++) {
+      try {
+        // 재시도 시 딜레이
+        if (retry > 0) {
+          await new Promise(r => setTimeout(r, 500 * retry));
+          console.log(`   🔄 RSI 재시도 ${retry}/${maxRetries} (${market})`);
+        }
+        
+        const candles = await fetchCandles(market, 60, period + 10);
+        if (!candles || candles.length < period + 1) {
+          console.log(`   ⚠️ ${market} 캔들 데이터 부족 (${candles?.length || 0}개)`);
+          return null;
+        }
+        
+        const closes = candles.map(c => c.trade_price);
+        
+        // technicalindicators 라이브러리 사용 (일관성)
+        const rsiResult = RSI.calculate({
+          values: closes,
+          period: period
+        });
+        
+        return rsiResult.length > 0 ? rsiResult[rsiResult.length - 1] : null;
+      } catch (error) {
+        if (retry === maxRetries) {
+          console.error(`RSI 조회 실패 (${market}): Upbit API 오류: ${error.message}`);
+          return null;
+        }
+        // 재시도
+      }
     }
+    return null;
   }
 };
