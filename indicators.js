@@ -1374,6 +1374,47 @@ module.exports = {
   fetchUSDKRWRate,
   
   // ============================================
+  // 🚀 변동성 돌파 체크 (v5.8.2 신규!)
+  // ============================================
+  checkVolatilityBreakout: async (market, k = 0.5) => {
+    try {
+      // 일봉 2개 조회 (어제 + 오늘)
+      const response = await fetch(`https://api.upbit.com/v1/candles/days?market=${market}&count=2`);
+      const candles = await response.json();
+      
+      if (!candles || candles.length < 2) {
+        return { canBuy: true, reason: '데이터 부족 - 통과' };
+      }
+      
+      const today = candles[0];    // 오늘 (최신)
+      const prevDay = candles[1];  // 어제
+      
+      // 전일 레인지 계산 (고가 - 저가)
+      const range = prevDay.high_price - prevDay.low_price;
+      
+      // 돌파 기준가 = 오늘 시가 + (전일 레인지 * K)
+      const targetPrice = today.opening_price + (range * k);
+      const currentPrice = today.trade_price;
+      
+      const canBuy = currentPrice >= targetPrice;
+      
+      return {
+        canBuy,
+        targetPrice: Math.round(targetPrice),
+        currentPrice,
+        range: Math.round(range),
+        openPrice: today.opening_price,
+        reason: canBuy 
+          ? `돌파 성공 (${currentPrice.toLocaleString()} ≥ ${Math.round(targetPrice).toLocaleString()})`
+          : `돌파 실패 (${currentPrice.toLocaleString()} < ${Math.round(targetPrice).toLocaleString()})`
+      };
+    } catch (error) {
+      console.error(`변동성 돌파 체크 실패 (${market}):`, error.message);
+      return { canBuy: true, reason: '조회 실패 - 통과' };
+    }
+  },
+  
+  // ============================================
   // 🎯 눌림목 감지 함수 (v5.8.1 신규!)
   // ============================================
   detectPullback: async (market) => {

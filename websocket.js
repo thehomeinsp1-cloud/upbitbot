@@ -18,8 +18,14 @@ const VOLUME_SPIKE_MULTIPLIER = 3.0;  // 평균 대비 3배 이상
 const VOLUME_WINDOW_MS = 5 * 60 * 1000; // 5분 윈도우
 const SPIKE_COOLDOWN_MS = 3 * 60 * 1000; // 같은 코인 3분 쿨다운
 
+// 🐋 고래 감지 기준 (v5.8.2)
+const WHALE_TRADE_AMOUNT = config.ADVANCED_STRATEGY?.whaleDetection?.minTradeAmount || 50000000;
+
 // 최근 급등 감지 시간
 const lastSpikes = new Map();
+
+// 🐋 고래 거래 기록 (v5.8.2)
+const whaleTradesRecent = new Map();
 
 // 콜백 함수 (급등 시 호출)
 let onVolumeSpike = null;
@@ -175,6 +181,10 @@ const processTrade = (trade) => {
     
     // 콜백 호출
     if (onVolumeSpike) {
+      // 🐋 고래 거래 여부 확인 (v5.8.2)
+      const recentWhale = whaleTradesRecent.get(market);
+      const isWhaleActive = recentWhale && (timestamp - recentWhale.timestamp) < 60000; // 1분 이내
+      
       onVolumeSpike({
         market,
         coinName,
@@ -182,9 +192,32 @@ const processTrade = (trade) => {
         tradeValue,
         avgValue,
         spikeRatio: parseFloat(spikeRatio),
-        timestamp
+        timestamp,
+        isWhaleTrade: isWhaleActive,
+        whaleAmount: isWhaleActive ? recentWhale.amount : 0
       });
     }
+  }
+  
+  // 🐋 고래 감지 (v5.8.2) - 5천만원 이상 단일 체결
+  if (tradeValue >= WHALE_TRADE_AMOUNT) {
+    const coinName = market.replace('KRW-', '');
+    console.log(`\n🐋 고래 감지! ${coinName}: ${Math.round(tradeValue / 1000000)}백만원 체결`);
+    
+    // 고래 거래 기록
+    whaleTradesRecent.set(market, {
+      amount: tradeValue,
+      price: tradePrice,
+      timestamp
+    });
+    
+    // 5분 후 기록 삭제
+    setTimeout(() => {
+      const record = whaleTradesRecent.get(market);
+      if (record && record.timestamp === timestamp) {
+        whaleTradesRecent.delete(market);
+      }
+    }, 5 * 60 * 1000);
   }
 };
 

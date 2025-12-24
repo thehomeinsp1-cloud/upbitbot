@@ -323,6 +323,7 @@ const buyCooldowns = new Map();
 const executeBuy = async (market, analysis) => {
   const coinName = market.replace('KRW-', '');
   const tradeConfig = config.AUTO_TRADE;
+  const advancedConfig = config.ADVANCED_STRATEGY || {};
   
   try {
     // 1. 매수 조건 체크
@@ -340,8 +341,30 @@ const executeBuy = async (market, analysis) => {
     }
     const currentPrice = ticker.trade_price;
 
-    // 3. 매수 금액 결정
-    const investAmount = Math.min(tradeConfig.maxInvestPerTrade, canBuy.availableKRW);
+    // 3. 💰 동적 자금 배분 (v5.8.2)
+    let investAmount = tradeConfig.maxInvestPerTrade;
+    
+    if (advancedConfig.dynamicSizing?.enabled) {
+      const score = parseFloat(analysis.scorePercent);
+      const { minMultiplier, maxMultiplier, baseScore, maxScore } = advancedConfig.dynamicSizing;
+      
+      // 점수에 따른 배율 계산 (78점: 30%, 90점: 100%)
+      const scoreRange = maxScore - baseScore;
+      const scoreAboveBase = Math.max(0, score - baseScore);
+      const multiplier = Math.min(maxMultiplier, minMultiplier + (scoreAboveBase / scoreRange) * (maxMultiplier - minMultiplier));
+      
+      investAmount = Math.floor(tradeConfig.maxInvestPerTrade * multiplier);
+      investAmount = Math.max(investAmount, 5500); // 최소 주문금액
+      
+      console.log(`   💰 동적 배분: ${score}점 → ${(multiplier * 100).toFixed(0)}% (${investAmount.toLocaleString()}원)`);
+    }
+    
+    // 🐋 고래 보너스 로그
+    if (analysis.volumeSpike?.isWhaleTrade) {
+      console.log(`   🐋 고래 동반 매수! (+${advancedConfig.whaleDetection?.scoreBonus || 10}점 보너스)`);
+    }
+    
+    investAmount = Math.min(investAmount, canBuy.availableKRW);
     
     // 4. 슬리피지 체크 (호가창 확인)
     if (!tradeConfig.testMode) {
@@ -388,6 +411,7 @@ const executeBuy = async (market, analysis) => {
       score: analysis.scorePercent,
       orderId: order.uuid,
       testMode: order.testMode || false,
+      isWhaleTrade: analysis.volumeSpike?.isWhaleTrade || false, // 고래 동반 여부
     };
     
     positions.set(market, position);
@@ -538,6 +562,7 @@ const executeSell = async (market, reason, currentPrice) => {
 
 const checkBuyConditions = async (market, analysis) => {
   const tradeConfig = config.AUTO_TRADE;
+  const advancedConfig = config.ADVANCED_STRATEGY || {};
   const coinName = market.replace('KRW-', '');
   
   // 1. 자동매매 활성화 확인
@@ -575,8 +600,35 @@ const checkBuyConditions = async (market, analysis) => {
   if (dailyPnL <= -tradeConfig.dailyLossLimit) {
     return { allowed: false, reason: `일일 손실 한도 도달 (${dailyPnL.toLocaleString()}원)` };
   }
+  
+  // ============================================
+  // 🆕 고급 필터 (v5.8.2)
+  // ============================================
+  
+  // 7. 🚀 변동성 돌파 체크
+  if (advancedConfig.volatilityBreakout?.enabled) {
+    const { checkVolatilityBreakout } = require('./indicators');
+    const kValue = advancedConfig.volatilityBreakout.kValue || 0.5;
+    const breakout = await checkVolatilityBreakout(market, kValue);
+    
+    if (!breakout.canBuy) {
+      console.log(`   📉 ${coinName} ${breakout.reason}`);
+      return { allowed: false, reason: `변동성 돌파 실패` };
+    }
+    console.log(`   📈 ${coinName} ${breakout.reason}`);
+  }
+  
+  // 8. 🇰🇷 김프 필터
+  if (advancedConfig.kimchiPremiumFilter?.enabled && analysis.kimchiPremium) {
+    const premium = parseFloat(analysis.kimchiPremium);
+    const maxPremium = advancedConfig.kimchiPremiumFilter.maxPremium || 4.5;
+    
+    if (premium > maxPremium) {
+      return { allowed: false, reason: `김프 과열 (${premium}% > ${maxPremium}%)` };
+    }
+  }
 
-  // 7. KRW 잔고 체크
+  // 9. KRW 잔고 체크
   let availableKRW = tradeConfig.maxInvestPerTrade;
   
   if (!tradeConfig.testMode) {
@@ -586,7 +638,7 @@ const checkBuyConditions = async (market, analysis) => {
     }
   }
 
-  // 8. 총 투자 한도 체크
+  // 10. 총 투자 한도 체크
   const totalInvested = Array.from(positions.values())
     .reduce((sum, p) => sum + p.investAmount, 0);
   
@@ -594,7 +646,7 @@ const checkBuyConditions = async (market, analysis) => {
     return { allowed: false, reason: `총 투자 한도 초과` };
   }
 
-  return { allowed: true, availableKRW };
+  return { allowed: true, availableKRW, score };
 };
 
 // ============================================

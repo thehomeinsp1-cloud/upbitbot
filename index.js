@@ -1,5 +1,5 @@
 /**
- * 🚀 암호화폐 자동매매 봇 v5.8.1
+ * 🚀 암호화폐 자동매매 봇 v5.8.2
  * 웹소켓 실시간 + ATR 트레일링 + 조기 익절 + 눌림목 매수
  * Render.com 배포 버전
  */
@@ -162,7 +162,7 @@ const generateDashboardHTML = () => {
 </head>
 <body>
   <div class="container">
-    <h1>🤖 자동매매 봇 <span>v5.8.1</span></h1>
+    <h1>🤖 자동매매 봇 <span>v5.8.2</span></h1>
     
     <div style="text-align:center;margin-bottom:20px;">
       <span class="status-badge status-running">● 실행 중</span>
@@ -381,6 +381,7 @@ let lastAlerts = {}; // 중복 알림 방지
 let analysisCount = 0;
 let watchCoins = []; // 모니터링할 코인 목록
 let lastUpdate = null;
+let lastFearGreedData = null; // 🆕 Fear & Greed 지수 캐시 (v5.8.2)
 
 // 콘솔 로그 (시간 포함)
 const log = (message) => {
@@ -438,6 +439,7 @@ const analyzeAndAlert = async (market, styleKey = null, styleConfig = null) => {
 
     const coinName = market.replace('KRW-', '');
     let technicalScore = parseFloat(analysis.scorePercent);
+    const advancedConfig = config.ADVANCED_STRATEGY || {};
     
     // 뉴스 분석 추가 (상위 코인만 - API 제한 고려)
     let newsData = { score: 0, sentiment: 'neutral', news: [] };
@@ -449,10 +451,40 @@ const analyzeAndAlert = async (market, styleKey = null, styleConfig = null) => {
     }
     
     // 최종 점수 계산 (기술적 90% + 뉴스 10%)
-    const newsBonus = newsData.score * config.NEWS_WEIGHT_PERCENT / 10;
-    const finalScore = Math.min(100, Math.max(0, technicalScore + newsBonus));
+    let newsBonus = newsData.score * config.NEWS_WEIGHT_PERCENT / 10;
+    let finalScore = technicalScore + newsBonus;
     
-    // 결과에 뉴스 정보 추가
+    // ============================================
+    // 🆕 고급 점수 조정 (v5.8.2)
+    // ============================================
+    
+    // 🌡️ Fear & Greed 지수 반영
+    if (advancedConfig.fearGreedAdjust?.enabled && lastFearGreedData) {
+      const fng = lastFearGreedData.value;
+      const { extremeFear, extremeGreed, fearBonus, greedPenalty } = advancedConfig.fearGreedAdjust;
+      
+      if (fng <= extremeFear) {
+        // 극도의 공포 → 역발상 매수 기회
+        finalScore += fearBonus;
+        console.log(`   🌡️ Fear & Greed ${fng} (공포) → +${fearBonus}점`);
+      } else if (fng >= extremeGreed) {
+        // 극도의 탐욕 → 매수 자제
+        finalScore += greedPenalty;
+        console.log(`   🌡️ Fear & Greed ${fng} (탐욕) → ${greedPenalty}점`);
+      }
+    }
+    
+    // 🐋 고래 동반 보너스
+    const volumeSpike = lastVolumeSpike.get(market);
+    if (volumeSpike?.isWhaleTrade && advancedConfig.whaleDetection?.enabled) {
+      const whaleBonus = advancedConfig.whaleDetection.scoreBonus || 10;
+      finalScore += whaleBonus;
+      console.log(`   🐋 고래 동반 감지! → +${whaleBonus}점`);
+    }
+    
+    finalScore = Math.min(100, Math.max(0, finalScore));
+    
+    // 결과에 정보 추가
     analysis.newsData = newsData;
     analysis.technicalScore = technicalScore;
     analysis.finalScore = finalScore.toFixed(0);
@@ -466,7 +498,6 @@ const analyzeAndAlert = async (market, styleKey = null, styleConfig = null) => {
     const alertKey = styleKey ? `${market}_${styleKey}` : market;
 
     // 📊 분석 결과 로그 (급등 감지 후)
-    const volumeSpike = lastVolumeSpike.get(market);
     if (volumeSpike && !volumeSpike.blocked) {
       if (finalScore >= minScore) {
         console.log(`   ✅ ${coinName} 분석 완료: ${finalScore.toFixed(0)}점 → 매수 조건 충족!`);
@@ -725,16 +756,17 @@ const runFullAnalysis = async () => {
   }
   
   // ============================================
-  // 🎯 눌림목 스캔 (v5.8.1 신규!)
+  // 🎯 눌림목 스캔 (v5.8.2 신규!)
   // ============================================
   if (config.PULLBACK_BUY?.enabled && config.AUTO_TRADE.enabled) {
     log(`\n🎯 눌림목 스캔 시작...`);
     await scanPullbackOpportunities();
   }
   
-  // 📊 Fear & Greed Index 조회
+  // 📊 Fear & Greed Index 조회 (v5.8.2: 전역 캐시에 저장)
   const fearGreedData = await fetchFearGreedIndex();
   if (fearGreedData) {
+    lastFearGreedData = fearGreedData; // 전역 캐시 업데이트
     log(`📊 시장 심리: ${fearGreedData.value} (${fearGreedData.classification} ${fearGreedData.emoji})`);
   }
   
@@ -892,14 +924,14 @@ const sendStartupMessage = async () => {
   const autoTradeStatus = autoTradeConfig.enabled ? '✅' : '❌';
   const testModeStatus = autoTradeConfig.testMode ? '🧪 테스트' : '💰 실전';
     
-  const message = `🤖 *자동매매 봇 v5.8.1 시작!*\n\n` +
+  const message = `🤖 *자동매매 봇 v5.8.2 시작!*\n\n` +
     `📌 모니터링: ${watchCoins.length}개 코인\n` +
     `💰 거래대금 필터: ${volumeFilterStatus}\n\n` +
     `🤖 *자동매매 ${autoTradeStatus}*\n` +
     `• 모드: ${testModeStatus}\n` +
     `• 1회 매수: ${autoTradeConfig.maxInvestPerTrade.toLocaleString()}원\n` +
     `• 최대 포지션: ${autoTradeConfig.maxPositions}개\n\n` +
-    `🆕 *v5.8.1 업데이트:*\n` +
+    `🆕 *v5.8.2 업데이트:*\n` +
     `• 🌐 웹 대시보드 추가\n` +
     `• 📱 /stats /positions /history\n` +
     `• 📊 일간/주간/월간 통계\n\n` +
@@ -1017,7 +1049,7 @@ const lastVolumeSpike = new Map();
 const pullbackCooldowns = new Map();
 
 // ============================================
-// ⚡ 급등 감지 병렬 처리 시스템 (v5.8.1)
+// ⚡ 급등 감지 병렬 처리 시스템 (v5.8.2)
 // ============================================
 const spikeQueue = [];
 let isProcessingSpikes = false;
@@ -1058,7 +1090,7 @@ const processSpikeBatch = async () => {
 };
 
 // ============================================
-// 🎯 눌림목 스캔 (v5.8.1 신규!)
+// 🎯 눌림목 스캔 (v5.8.2 신규!)
 // ============================================
 const scanPullbackOpportunities = async () => {
   const pullbackConfig = config.PULLBACK_BUY;
@@ -1231,7 +1263,7 @@ const registerTelegramCommands = () => {
     const mins = Math.floor((uptime % 3600) / 60);
     
     const message = `🤖 *봇 상태*\n\n` +
-      `📊 버전: v5.8.1\n` +
+      `📊 버전: v5.8.2\n` +
       `⏱ 가동시간: ${hours}시간 ${mins}분\n` +
       `📈 분석 횟수: ${analysisCount}회\n` +
       `👀 모니터링: ${watchCoins.length}개 코인\n\n` +
@@ -1306,7 +1338,7 @@ const registerTelegramCommands = () => {
 const main = async () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
-║  🚀 암호화폐 자동매매 봇 v5.8.1                       ║
+║  🚀 암호화폐 자동매매 봇 v5.8.2                       ║
 ║  웹 대시보드 + 텔레그램 명령어 추가                   ║
 ║  Render.com 배포 버전                                ║
 ╚══════════════════════════════════════════════════════╝
