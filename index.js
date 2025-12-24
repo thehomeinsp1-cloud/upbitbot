@@ -154,6 +154,26 @@ const generateDashboardHTML = () => {
       margin-top: 20px;
     }
     
+    .nav-tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 25px;
+      justify-content: center;
+    }
+    .nav-tab {
+      background: rgba(255,255,255,0.1);
+      border: none;
+      padding: 12px 25px;
+      border-radius: 10px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 1em;
+      text-decoration: none;
+      transition: all 0.3s;
+    }
+    .nav-tab:hover { background: rgba(255,255,255,0.2); }
+    .nav-tab.active { background: #4ade80; color: #000; font-weight: bold; }
+    
     @media (max-width: 600px) {
       .stat-card .value { font-size: 1.5em; }
       th, td { padding: 8px; font-size: 0.9em; }
@@ -163,6 +183,11 @@ const generateDashboardHTML = () => {
 <body>
   <div class="container">
     <h1>🤖 자동매매 봇 <span>v5.8.2</span></h1>
+    
+    <div class="nav-tabs">
+      <a href="/" class="nav-tab active">📊 대시보드</a>
+      <a href="/analytics" class="nav-tab">📈 상세 분석</a>
+    </div>
     
     <div style="text-align:center;margin-bottom:20px;">
       <span class="status-badge status-running">● 실행 중</span>
@@ -288,6 +313,408 @@ const generateDashboardHTML = () => {
   `;
 };
 
+// ============================================
+// 📈 상세 분석 페이지 HTML
+// ============================================
+
+const generateAnalyticsHTML = async () => {
+  const stats = trader.getStatistics('all');
+  const todayStats = trader.getStatistics('today');
+  const weekStats = trader.getStatistics('week');
+  const monthStats = trader.getStatistics('month');
+  const history = trader.getTradeHistory();
+  
+  // 코인별 통계 계산
+  const coinStats = {};
+  history.filter(t => t.type === 'SELL' || t.type === 'PARTIAL_SELL').forEach(t => {
+    if (!coinStats[t.coinName]) {
+      coinStats[t.coinName] = { wins: 0, losses: 0, totalPnl: 0, trades: 0 };
+    }
+    coinStats[t.coinName].trades++;
+    coinStats[t.coinName].totalPnl += t.pnl || 0;
+    if ((t.pnl || 0) > 0) coinStats[t.coinName].wins++;
+    else coinStats[t.coinName].losses++;
+  });
+  
+  // 최고/최저 수익 코인
+  const coinRanking = Object.entries(coinStats)
+    .map(([coin, s]) => ({
+      coin,
+      ...s,
+      winRate: s.trades > 0 ? ((s.wins / s.trades) * 100).toFixed(1) : 0,
+      avgPnl: s.trades > 0 ? (s.totalPnl / s.trades).toFixed(0) : 0
+    }))
+    .sort((a, b) => b.totalPnl - a.totalPnl);
+  
+  const topCoins = coinRanking.slice(0, 5);
+  const bottomCoins = [...coinRanking].sort((a, b) => a.totalPnl - b.totalPnl).slice(0, 5);
+  
+  // 시간대별 통계
+  const hourlyStats = {};
+  for (let i = 0; i < 24; i++) hourlyStats[i] = { wins: 0, losses: 0, total: 0 };
+  
+  history.filter(t => t.type === 'SELL' || t.type === 'PARTIAL_SELL').forEach(t => {
+    const hour = new Date(t.timestamp).getHours();
+    hourlyStats[hour].total++;
+    if ((t.pnl || 0) > 0) hourlyStats[hour].wins++;
+    else hourlyStats[hour].losses++;
+  });
+  
+  // 일별 수익 (최근 30일)
+  const dailyPnl = {};
+  history.filter(t => t.type === 'SELL' || t.type === 'PARTIAL_SELL').forEach(t => {
+    const date = new Date(t.timestamp).toISOString().split('T')[0];
+    if (!dailyPnl[date]) dailyPnl[date] = 0;
+    dailyPnl[date] += t.pnl || 0;
+  });
+  
+  const dailyData = Object.entries(dailyPnl)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(-30);
+  
+  // DB 상태 확인
+  const dbStatus = trader.getDbStatus ? trader.getDbStatus() : { connected: false };
+  
+  // 코인 랭킹 테이블
+  const topCoinsRows = topCoins.map((c, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><strong>${c.coin}</strong></td>
+      <td>${c.trades}건</td>
+      <td>${c.wins}승 ${c.losses}패</td>
+      <td class="${parseFloat(c.winRate) >= 50 ? 'profit' : 'loss'}">${c.winRate}%</td>
+      <td class="profit">+${c.totalPnl.toLocaleString()}원</td>
+    </tr>
+  `).join('') || '<tr><td colspan="6" style="text-align:center;color:#888;">데이터 없음</td></tr>';
+  
+  const bottomCoinsRows = bottomCoins.map((c, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><strong>${c.coin}</strong></td>
+      <td>${c.trades}건</td>
+      <td>${c.wins}승 ${c.losses}패</td>
+      <td class="${parseFloat(c.winRate) >= 50 ? 'profit' : 'loss'}">${c.winRate}%</td>
+      <td class="${c.totalPnl >= 0 ? 'profit' : 'loss'}">${c.totalPnl >= 0 ? '+' : ''}${c.totalPnl.toLocaleString()}원</td>
+    </tr>
+  `).join('') || '<tr><td colspan="6" style="text-align:center;color:#888;">데이터 없음</td></tr>';
+  
+  // 시간대별 차트 데이터
+  const hourlyChartData = Object.entries(hourlyStats).map(([hour, s]) => {
+    const winRate = s.total > 0 ? ((s.wins / s.total) * 100).toFixed(0) : 0;
+    return { hour: parseInt(hour), ...s, winRate };
+  });
+  
+  return `
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📈 상세 분석 - 자동매매 봇</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #fff;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { text-align: center; margin-bottom: 20px; font-size: 2em; }
+    h1 span { color: #4ade80; }
+    
+    .nav-tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 25px;
+      justify-content: center;
+    }
+    .nav-tab {
+      background: rgba(255,255,255,0.1);
+      border: none;
+      padding: 12px 25px;
+      border-radius: 10px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 1em;
+      text-decoration: none;
+      transition: all 0.3s;
+    }
+    .nav-tab:hover { background: rgba(255,255,255,0.2); }
+    .nav-tab.active { background: #4ade80; color: #000; font-weight: bold; }
+    
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 25px;
+    }
+    .stat-card {
+      background: rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 18px;
+      backdrop-filter: blur(10px);
+    }
+    .stat-card h3 { color: #888; font-size: 0.85em; margin-bottom: 8px; }
+    .stat-card .value { font-size: 1.8em; font-weight: bold; }
+    .stat-card .sub { color: #888; font-size: 0.8em; margin-top: 5px; }
+    
+    .profit { color: #4ade80; }
+    .loss { color: #f87171; }
+    
+    .section {
+      background: rgba(255,255,255,0.05);
+      border-radius: 15px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .section h2 { margin-bottom: 15px; font-size: 1.1em; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; }
+    
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+      gap: 20px;
+    }
+    
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 0.9em; }
+    th { color: #888; font-weight: normal; }
+    tr:hover { background: rgba(255,255,255,0.05); }
+    
+    .chart-container {
+      height: 200px;
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      padding: 10px 0;
+    }
+    .chart-bar {
+      flex: 1;
+      background: linear-gradient(to top, #4ade80, #22c55e);
+      border-radius: 4px 4px 0 0;
+      min-height: 5px;
+      position: relative;
+      transition: all 0.3s;
+    }
+    .chart-bar:hover { opacity: 0.8; }
+    .chart-bar.negative { background: linear-gradient(to top, #f87171, #ef4444); }
+    .chart-bar .tooltip {
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #000;
+      padding: 5px 10px;
+      border-radius: 5px;
+      font-size: 0.75em;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .chart-bar:hover .tooltip { opacity: 1; }
+    
+    .hourly-chart {
+      display: flex;
+      gap: 2px;
+      height: 100px;
+      align-items: flex-end;
+    }
+    .hour-bar {
+      flex: 1;
+      background: #4ade80;
+      border-radius: 2px 2px 0 0;
+      min-height: 3px;
+      cursor: pointer;
+    }
+    .hour-bar.low { background: #fbbf24; }
+    .hour-bar.bad { background: #f87171; }
+    .hour-labels {
+      display: flex;
+      gap: 2px;
+      margin-top: 5px;
+    }
+    .hour-labels span {
+      flex: 1;
+      text-align: center;
+      font-size: 0.65em;
+      color: #666;
+    }
+    
+    .db-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0,0,0,0.3);
+      padding: 8px 15px;
+      border-radius: 20px;
+      font-size: 0.85em;
+    }
+    .db-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #4ade80;
+    }
+    .db-dot.offline { background: #f87171; }
+    
+    .refresh-info {
+      text-align: center;
+      color: #666;
+      font-size: 0.85em;
+      margin-top: 20px;
+    }
+    
+    @media (max-width: 600px) {
+      .stat-card .value { font-size: 1.4em; }
+      th, td { padding: 6px; font-size: 0.8em; }
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📈 상세 분석 <span>리포트</span></h1>
+    
+    <div class="nav-tabs">
+      <a href="/" class="nav-tab">📊 대시보드</a>
+      <a href="/analytics" class="nav-tab active">📈 상세 분석</a>
+    </div>
+    
+    <div style="text-align:center;margin-bottom:25px;">
+      <div class="db-status">
+        <div class="db-dot ${dbStatus.connected ? '' : 'offline'}"></div>
+        <span>MongoDB ${dbStatus.connected ? '연결됨' : '미연결'}</span>
+      </div>
+    </div>
+    
+    <!-- 종합 성과 -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <h3>📊 총 거래</h3>
+        <div class="value">${stats.totalTrades || 0}건</div>
+        <div class="sub">${stats.wins || 0}승 ${stats.losses || 0}패</div>
+      </div>
+      <div class="stat-card">
+        <h3>🎯 승률</h3>
+        <div class="value ${parseFloat(stats.winRate) >= 50 ? 'profit' : 'loss'}">${stats.winRate || 0}%</div>
+      </div>
+      <div class="stat-card">
+        <h3>💰 총 수익</h3>
+        <div class="value ${(stats.totalPnl || 0) >= 0 ? 'profit' : 'loss'}">
+          ${(stats.totalPnl || 0) >= 0 ? '+' : ''}${(stats.totalPnl || 0).toLocaleString()}원
+        </div>
+      </div>
+      <div class="stat-card">
+        <h3>📈 평균 수익률</h3>
+        <div class="value ${parseFloat(stats.avgPnlPercent) >= 0 ? 'profit' : 'loss'}">
+          ${parseFloat(stats.avgPnlPercent) >= 0 ? '+' : ''}${stats.avgPnlPercent || 0}%
+        </div>
+      </div>
+    </div>
+    
+    <!-- 기간별 비교 -->
+    <div class="section">
+      <h2>📅 기간별 성과 비교</h2>
+      <div class="stats-grid">
+        <div class="stat-card" style="border-left: 4px solid #60a5fa;">
+          <h3>오늘</h3>
+          <div class="value ${(todayStats.totalPnl || 0) >= 0 ? 'profit' : 'loss'}">
+            ${(todayStats.totalPnl || 0) >= 0 ? '+' : ''}${(todayStats.totalPnl || 0).toLocaleString()}원
+          </div>
+          <div class="sub">${todayStats.totalTrades || 0}건 | 승률 ${todayStats.winRate || 0}%</div>
+        </div>
+        <div class="stat-card" style="border-left: 4px solid #a78bfa;">
+          <h3>이번 주</h3>
+          <div class="value ${(weekStats.totalPnl || 0) >= 0 ? 'profit' : 'loss'}">
+            ${(weekStats.totalPnl || 0) >= 0 ? '+' : ''}${(weekStats.totalPnl || 0).toLocaleString()}원
+          </div>
+          <div class="sub">${weekStats.totalTrades || 0}건 | 승률 ${weekStats.winRate || 0}%</div>
+        </div>
+        <div class="stat-card" style="border-left: 4px solid #f472b6;">
+          <h3>이번 달</h3>
+          <div class="value ${(monthStats.totalPnl || 0) >= 0 ? 'profit' : 'loss'}">
+            ${(monthStats.totalPnl || 0) >= 0 ? '+' : ''}${(monthStats.totalPnl || 0).toLocaleString()}원
+          </div>
+          <div class="sub">${monthStats.totalTrades || 0}건 | 승률 ${monthStats.winRate || 0}%</div>
+        </div>
+        <div class="stat-card" style="border-left: 4px solid #4ade80;">
+          <h3>전체</h3>
+          <div class="value ${(stats.totalPnl || 0) >= 0 ? 'profit' : 'loss'}">
+            ${(stats.totalPnl || 0) >= 0 ? '+' : ''}${(stats.totalPnl || 0).toLocaleString()}원
+          </div>
+          <div class="sub">${stats.totalTrades || 0}건 | 승률 ${stats.winRate || 0}%</div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 일별 수익 차트 -->
+    <div class="section">
+      <h2>📊 일별 수익 추이 (최근 30일)</h2>
+      <div class="chart-container">
+        ${dailyData.length > 0 ? dailyData.map(([date, pnl]) => {
+          const maxPnl = Math.max(...dailyData.map(d => Math.abs(d[1]))) || 1;
+          const height = Math.max(5, (Math.abs(pnl) / maxPnl) * 180);
+          return `
+            <div class="chart-bar ${pnl < 0 ? 'negative' : ''}" style="height: ${height}px;">
+              <div class="tooltip">${date.slice(5)}<br>${pnl >= 0 ? '+' : ''}${pnl.toLocaleString()}원</div>
+            </div>
+          `;
+        }).join('') : '<div style="color:#666;text-align:center;width:100%;padding:50px;">거래 데이터가 없습니다</div>'}
+      </div>
+    </div>
+    
+    <!-- 코인별 랭킹 -->
+    <div class="grid-2">
+      <div class="section">
+        <h2>🏆 최고 수익 코인 TOP 5</h2>
+        <table>
+          <thead>
+            <tr><th>#</th><th>코인</th><th>거래</th><th>승/패</th><th>승률</th><th>수익</th></tr>
+          </thead>
+          <tbody>${topCoinsRows}</tbody>
+        </table>
+      </div>
+      
+      <div class="section">
+        <h2>📉 최저 수익 코인 TOP 5</h2>
+        <table>
+          <thead>
+            <tr><th>#</th><th>코인</th><th>거래</th><th>승/패</th><th>승률</th><th>수익</th></tr>
+          </thead>
+          <tbody>${bottomCoinsRows}</tbody>
+        </table>
+      </div>
+    </div>
+    
+    <!-- 시간대별 승률 -->
+    <div class="section">
+      <h2>🕐 시간대별 승률</h2>
+      <div class="hourly-chart">
+        ${hourlyChartData.map(h => {
+          const height = h.total > 0 ? Math.max(10, h.winRate) : 5;
+          const colorClass = h.winRate >= 60 ? '' : h.winRate >= 40 ? 'low' : 'bad';
+          return `<div class="hour-bar ${colorClass}" style="height: ${height}%" title="${h.hour}시: ${h.winRate}% (${h.total}건)"></div>`;
+        }).join('')}
+      </div>
+      <div class="hour-labels">
+        ${[0,2,4,6,8,10,12,14,16,18,20,22].map(h => `<span>${h}</span><span></span>`).join('')}
+      </div>
+      <div style="color:#666;font-size:0.8em;margin-top:10px;text-align:center;">
+        🟢 60%+ | 🟡 40-60% | 🔴 40% 미만
+      </div>
+    </div>
+    
+    <div class="refresh-info">
+      마지막 업데이트: ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}
+      <br>페이지 새로고침으로 최신 정보 확인
+    </div>
+  </div>
+</body>
+</html>
+  `;
+};
+
 const server = http.createServer((req, res) => {
   const url = req.url.split('?')[0];
   
@@ -295,6 +722,18 @@ const server = http.createServer((req, res) => {
   if (url === '/' || url === '/dashboard') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(generateDashboardHTML());
+    return;
+  }
+  
+  // 📈 분석 페이지
+  if (url === '/analytics') {
+    generateAnalyticsHTML().then(html => {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    }).catch(err => {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end('Error: ' + err.message);
+    });
     return;
   }
   
