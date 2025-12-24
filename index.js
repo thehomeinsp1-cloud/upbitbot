@@ -1,12 +1,12 @@
 /**
- * 🚀 암호화폐 자동매매 봇 v5.8
- * 웹소켓 실시간 + ATR 트레일링 + 조기 익절 시스템
+ * 🚀 암호화폐 자동매매 봇 v5.8.1
+ * 웹소켓 실시간 + ATR 트레일링 + 조기 익절 + 눌림목 매수
  * Render.com 배포 버전
  */
 
 const http = require('http');
 const config = require('./config');
-const { analyzeMarket, getMarketSummary, fetchAllKRWMarkets } = require('./indicators');
+const { analyzeMarket, getMarketSummary, fetchAllKRWMarkets, detectPullback } = require('./indicators');
 const { sendTelegramMessage, sendTelegramAlert } = require('./telegram');
 const { fetchCoinNews, fetchMarketNews, getSentimentText, fetchFearGreedIndex, adjustScoreWithSafety, checkBtcAboveMA20 } = require('./news');
 const trader = require('./trader');
@@ -162,7 +162,7 @@ const generateDashboardHTML = () => {
 </head>
 <body>
   <div class="container">
-    <h1>🤖 자동매매 봇 <span>v5.8.0</span></h1>
+    <h1>🤖 자동매매 봇 <span>v5.8.1</span></h1>
     
     <div style="text-align:center;margin-bottom:20px;">
       <span class="status-badge status-running">● 실행 중</span>
@@ -713,6 +713,14 @@ const runFullAnalysis = async () => {
     await trader.monitorPositions();
   }
   
+  // ============================================
+  // 🎯 눌림목 스캔 (v5.8.1 신규!)
+  // ============================================
+  if (config.PULLBACK_BUY?.enabled && config.AUTO_TRADE.enabled) {
+    log(`\n🎯 눌림목 스캔 시작...`);
+    await scanPullbackOpportunities();
+  }
+  
   // 📊 Fear & Greed Index 조회
   const fearGreedData = await fetchFearGreedIndex();
   if (fearGreedData) {
@@ -992,6 +1000,97 @@ const fetchRecentHigh = async (market) => {
 // 거래량 급등 정보 저장 (알림 통합용)
 const lastVolumeSpike = new Map();
 
+// 눌림목 쿨다운 (같은 코인 중복 감지 방지)
+const pullbackCooldowns = new Map();
+
+// ============================================
+// 🎯 눌림목 스캔 (v5.8.1 신규!)
+// ============================================
+const scanPullbackOpportunities = async () => {
+  const pullbackConfig = config.PULLBACK_BUY;
+  if (!pullbackConfig?.enabled) return;
+  
+  const minScore = pullbackConfig.minScore || 72;
+  let detectedCount = 0;
+  let buyCount = 0;
+  
+  // 상위 거래대금 코인만 스캔 (API 부하 감소)
+  const scanCoins = watchCoins.slice(0, 50);
+  
+  for (const market of scanCoins) {
+    try {
+      const coinName = market.replace('KRW-', '');
+      
+      // 쿨다운 체크 (30분)
+      const lastPullback = pullbackCooldowns.get(market);
+      if (lastPullback && Date.now() - lastPullback < 30 * 60 * 1000) {
+        continue;
+      }
+      
+      // 이미 보유 중인 코인 스킵
+      const positions = trader.getPositions();
+      if (positions.has(market)) continue;
+      
+      // 눌림목 감지
+      const pullback = await detectPullback(market);
+      
+      if (pullback && pullback.detected) {
+        detectedCount++;
+        console.log(`🎯 눌림목 감지! ${coinName}: ${pullback.reason}`);
+        
+        // 추가 분석 실행
+        const analysis = await analyzeMarket(market);
+        if (!analysis) continue;
+        
+        const score = parseFloat(analysis.scorePercent);
+        
+        // 점수 조건 충족 시 매수
+        if (score >= minScore) {
+          console.log(`   ✅ ${coinName} 점수 ${score}점 ≥ ${minScore}점 → 매수 진행!`);
+          
+          // 쿨다운 설정
+          pullbackCooldowns.set(market, Date.now());
+          
+          // 눌림목 정보 추가
+          analysis.pullbackData = pullback;
+          analysis.entryType = 'pullback';
+          
+          // 텔레그램 알림
+          await sendTelegramMessage(
+            `🎯 *눌림목 매수 신호!*\n\n` +
+            `💰 *${coinName}*\n` +
+            `📊 점수: ${score}점\n` +
+            `📈 RSI: ${pullback.rsi.toFixed(1)}\n` +
+            `📉 고점 대비: -${pullback.pullbackPercent}%\n` +
+            `💡 MA20 위 상승추세 + 조정 구간\n\n` +
+            `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`
+          );
+          
+          // 자동매수 실행
+          if (config.AUTO_TRADE.enabled) {
+            await trader.executeBuy(market, analysis);
+            buyCount++;
+          }
+        } else {
+          console.log(`   ⏸️ ${coinName} 점수 ${score}점 < ${minScore}점 → 대기`);
+        }
+      }
+      
+      // API 속도 제한
+      await sleep(200);
+      
+    } catch (error) {
+      // 개별 코인 오류는 무시하고 계속
+    }
+  }
+  
+  if (detectedCount > 0) {
+    console.log(`🎯 눌림목 스캔 완료: ${detectedCount}개 감지, ${buyCount}개 매수`);
+  } else {
+    console.log(`🎯 눌림목 스캔 완료: 감지된 신호 없음`);
+  }
+};
+
 // ============================================
 // 📱 텔레그램 명령어 등록
 // ============================================
@@ -1078,7 +1177,7 @@ const registerTelegramCommands = () => {
     const mins = Math.floor((uptime % 3600) / 60);
     
     const message = `🤖 *봇 상태*\n\n` +
-      `📊 버전: v5.8.0\n` +
+      `📊 버전: v5.8.1\n` +
       `⏱ 가동시간: ${hours}시간 ${mins}분\n` +
       `📈 분석 횟수: ${analysisCount}회\n` +
       `👀 모니터링: ${watchCoins.length}개 코인\n\n` +

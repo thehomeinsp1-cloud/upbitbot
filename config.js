@@ -65,6 +65,29 @@ module.exports = {
     minScore: 78,               // 최소 매수 점수
     cooldownMinutes: 30,        // 같은 코인 재매수 대기 (분)
   },
+  
+  // ============================================
+  // 🎯 눌림목 매수 설정 (v5.8.1 신규!)
+  // ============================================
+  
+  PULLBACK_BUY: {
+    enabled: true,              // 눌림목 매수 활성화
+    
+    // 📊 진입 조건
+    minScore: 72,               // 눌림목은 점수 기준 완화 (급등보다 낮음)
+    rsiMin: 35,                 // RSI 하한 (너무 약하면 제외)
+    rsiMax: 50,                 // RSI 상한 (과매수 아닌 조정 구간)
+    
+    // 📈 추세 조건
+    requireUptrend: true,       // 상승 추세 필수 (MA20 위)
+    minPullbackPercent: 3,      // 최근 고점 대비 최소 하락률 (%)
+    maxPullbackPercent: 10,     // 최근 고점 대비 최대 하락률 (%)
+    
+    // 🔍 추가 필터
+    requireBollingerLower: true, // 볼린저 하단 근처 필수
+    bollingerThreshold: 0.3,     // 하단에서 밴드폭의 30% 이내
+    minVolume: 0.5,              // 평균 거래량의 최소 배수
+  },
 
   // ============================================
   // 📊 모니터링할 코인 목록
