@@ -461,8 +461,19 @@ const analyzeAndAlert = async (market, styleKey = null, styleConfig = null) => {
 
     // 스타일별 알림 기준 적용
     const alertThreshold = styleConfig?.alert_threshold || config.ALERT_THRESHOLD;
+    const minScore = config.AUTO_TRADE.minScore || 78;
     const cooldown = styleConfig?.cooldown || config.ALERT_COOLDOWN;
     const alertKey = styleKey ? `${market}_${styleKey}` : market;
+
+    // 📊 분석 결과 로그 (급등 감지 후)
+    const volumeSpike = lastVolumeSpike.get(market);
+    if (volumeSpike && !volumeSpike.blocked) {
+      if (finalScore >= minScore) {
+        console.log(`   ✅ ${coinName} 분석 완료: ${finalScore.toFixed(0)}점 → 매수 조건 충족!`);
+      } else {
+        console.log(`   ⏸️ ${coinName} 분석 완료: ${finalScore.toFixed(0)}점 < ${minScore}점 → 매수 스킵`);
+      }
+    }
 
     // 강력 매수 신호
     if (finalScore >= alertThreshold) {
@@ -480,9 +491,9 @@ const analyzeAndAlert = async (market, styleKey = null, styleConfig = null) => {
         if (config.AUTO_TRADE.enabled && (!styleKey || styleKey === 'daytrading')) {
           try {
             // 거래량 급등 정보 추가
-            const volumeSpike = getVolumeSpikeInfo(market);
-            if (volumeSpike) {
-              analysis.volumeSpike = volumeSpike;
+            const volumeSpikeData = getVolumeSpikeInfo(market);
+            if (volumeSpikeData) {
+              analysis.volumeSpike = volumeSpikeData;
             }
             await trader.executeBuy(market, analysis);
           } catch (tradeError) {

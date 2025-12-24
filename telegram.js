@@ -114,7 +114,10 @@ const pollUpdates = async () => {
     const data = await response.json();
     
     if (!data.ok) {
-      console.error('❌ 텔레그램 폴링 실패:', data.description);
+      // Conflict 에러는 무시 (다른 인스턴스 실행 중)
+      if (!data.description?.includes('Conflict')) {
+        console.error('❌ 텔레그램 폴링 실패:', data.description);
+      }
       return;
     }
     
@@ -168,7 +171,11 @@ const pollUpdates = async () => {
       }
     }
   } catch (error) {
-    console.error('텔레그램 폴링 오류:', error.message);
+    // 폴링 충돌 에러는 무시 (다른 인스턴스 실행 중)
+    // 다른 심각한 에러만 로그
+    if (!error.message?.includes('Conflict')) {
+      console.error('텔레그램 폴링 오류:', error.message);
+    }
   }
 };
 
