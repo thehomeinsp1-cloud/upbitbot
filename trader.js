@@ -1,6 +1,6 @@
 /**
- * 🤖 자동매매 트레이더 모듈 v5.8
- * 매수/매도 결정 및 포지션 관리 + 영구 저장
+ * 🤖 자동매매 트레이더 모듈 v5.8.2
+ * 매수/매도 결정 및 포지션 관리 + MongoDB 영구 저장
  * 조기 익절 시스템: 1.5% 본전 이동 + 2%/4% 단계별 부분 익절
  */
 
@@ -10,6 +10,7 @@ const config = require('./config');
 const upbit = require('./upbit');
 const { sendTelegramMessage, sendTelegramMessageWithButtons } = require('./telegram');
 const { fetchRSIForTrader } = require('./indicators');
+const database = require('./database');
 
 // ============================================
 // 📊 RSI 조회 (indicators.js 라이브러리 사용 - 일관성)
@@ -416,19 +417,26 @@ const executeBuy = async (market, analysis) => {
     
     positions.set(market, position);
     
-    // 💾 포지션 파일에 즉시 저장 (서버 재시작 대비)
+    // 💾 포지션 저장 (파일 + DB)
     savePositions();
+    if (database.isDbConnected()) {
+      await database.savePosition(market, position);
+    }
     
     // 8. 쿨다운 설정
     buyCooldowns.set(market, Date.now());
     
-    // 9. 매매 기록
-    tradeHistory.push({
+    // 9. 매매 기록 (파일 + DB)
+    const tradeRecord = {
       type: 'BUY',
       ...position,
       timestamp: new Date(),
-    });
+    };
+    tradeHistory.push(tradeRecord);
     saveTradeHistory();
+    if (database.isDbConnected()) {
+      await database.saveTrade(tradeRecord);
+    }
 
     // 10. 텔레그램 알림
     await sendBuyNotification(position, analysis);
@@ -520,7 +528,7 @@ const executeSell = async (market, reason, currentPrice) => {
     // 5. 일일 손익 업데이트
     dailyPnL += pnl;
     
-    // 6. 매매 기록
+    // 6. 매매 기록 (파일 + DB)
     const trade = {
       type: 'SELL',
       market,
@@ -537,12 +545,16 @@ const executeSell = async (market, reason, currentPrice) => {
     };
     tradeHistory.push(trade);
     saveTradeHistory();
+    if (database.isDbConnected()) {
+      await database.saveTrade(trade);
+    }
     
-    // 7. 포지션 삭제
+    // 7. 포지션 삭제 (파일 + DB)
     positions.delete(market);
-    
-    // 💾 포지션 파일에 즉시 저장 (서버 재시작 대비)
     savePositions();
+    if (database.isDbConnected()) {
+      await database.deletePosition(market);
+    }
     
     // 8. 텔레그램 알림
     await sendSellNotification(trade);
@@ -973,9 +985,30 @@ const initialize = async () => {
     return false;
   }
   
-  // 💾 저장된 포지션 복원 (서버 재시작 대비)
-  console.log('\n📂 저장된 데이터 복원 중...');
-  loadPositions();
+  // 🗄️ MongoDB 연결 시도
+  const dbConnected = await database.connect();
+  if (dbConnected) {
+    console.log('🗄️ MongoDB 영구 저장 활성화');
+    
+    // DB에서 포지션 복원
+    const dbPositions = await database.getAllPositions();
+    if (dbPositions.length > 0) {
+      console.log(`📂 DB에서 포지션 ${dbPositions.length}개 복원`);
+      dbPositions.forEach(p => {
+        if (p.market) {
+          positions.set(p.market, p);
+        }
+      });
+    }
+  } else {
+    console.log('⚠️ MongoDB 미연결 - 파일 저장 모드');
+  }
+  
+  // 💾 파일에서 포지션 복원 (DB 없을 때 백업)
+  if (positions.size === 0) {
+    console.log('\n📂 파일에서 데이터 복원 중...');
+    loadPositions();
+  }
   loadTradeHistory();
   
   // 복원된 포지션이 있으면 알림
@@ -987,7 +1020,7 @@ const initialize = async () => {
     await sendTelegramMessage(
       `📂 *포지션 복원 완료!*\n\n` +
       `보유 중인 포지션 ${positions.size}개:\n${positionList}\n\n` +
-      `💡 서버 재시작 후 자동 복원됨`
+      `🗄️ 저장: ${dbConnected ? 'MongoDB' : '파일'}`
     );
   }
   
@@ -1035,6 +1068,9 @@ module.exports = {
   getScoreBasedStats,
   resetTradeHistory,
   resetAll,
+  // DB 관련
+  getDbStatus: () => database.getDbStatus(),
+  getDbStats: (period) => database.calculateStats(period),
 };
 
 // ============================================

@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
-  "version": "5.7.7",
-  "description": "암호화폐 자동매매 봇 - 목표가+안전익절 강화",
+  "version": "5.8.2",
+  "description": "암호화폐 자동매매 봇 - MongoDB 연동 + 고급 전략",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -16,11 +16,13 @@
     "bot",
     "auto-trade",
     "websocket",
-    "realtime"
+    "realtime",
+    "mongodb"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "mongodb": "^6.3.0",
     "technicalindicators": "^3.1.0",
     "uuid": "^9.0.0",
     "ws": "^8.16.0"
