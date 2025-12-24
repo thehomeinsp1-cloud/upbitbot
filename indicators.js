@@ -1391,15 +1391,19 @@ module.exports = {
       const volumes = candles.map(c => c.candle_acc_trade_volume);
       const currentPrice = closes[closes.length - 1];
       
-      // 1. RSI 계산
+      // 1. RSI 계산 (실패 시 다른 조건으로 대체)
       const rsiResult = RSI.calculate({ values: closes, period: 14 });
       const rsi = rsiResult.length > 0 ? rsiResult[rsiResult.length - 1] : null;
-      if (!rsi) return null;
       
-      // RSI 조건 체크
-      const rsiMin = pullbackConfig.rsiMin || 35;
-      const rsiMax = pullbackConfig.rsiMax || 50;
-      if (rsi < rsiMin || rsi > rsiMax) return null;
+      // RSI 조건 체크 (RSI 있을 때만)
+      let rsiConditionMet = true;
+      if (rsi !== null) {
+        const rsiMin = pullbackConfig.rsiMin || 35;
+        const rsiMax = pullbackConfig.rsiMax || 50;
+        rsiConditionMet = rsi >= rsiMin && rsi <= rsiMax;
+        if (!rsiConditionMet) return null;
+      }
+      // RSI 없으면 다른 조건으로 진행
       
       // 2. MA20 계산 (상승 추세 확인)
       const ma20 = closes.slice(-20).reduce((a, b) => a + b, 0) / 20;
@@ -1451,14 +1455,14 @@ module.exports = {
         detected: true,
         market,
         currentPrice,
-        rsi,
+        rsi: rsi || 'N/A',
         ma20,
         isAboveMA20,
         recentHigh,
         pullbackPercent: pullbackPercent.toFixed(2),
         volumeRatio: volumeRatio.toFixed(2),
         nearBollingerLower,
-        reason: `RSI ${rsi.toFixed(1)} | 고점 대비 -${pullbackPercent.toFixed(1)}% | MA20 위`
+        reason: `${rsi ? `RSI ${rsi.toFixed(1)}` : 'RSI N/A'} | 고점 대비 -${pullbackPercent.toFixed(1)}% | MA20 위`
       };
     } catch (error) {
       console.error(`눌림목 감지 오류 (${market}):`, error.message);

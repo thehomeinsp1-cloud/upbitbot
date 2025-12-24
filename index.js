@@ -920,14 +920,13 @@ const handleVolumeSpike = async (spikeData) => {
     // 🛡️ 옵션 A: 급등 필터 (고점 매수 방지)
     // ============================================
     
-    // 1. RSI 체크 (과매수 방지)
+    // 1. RSI 체크 (과매수 방지) - 실패 시 고점 필터로 대체
     const rsi = await trader.fetchRSI(market);
     if (rsi !== null) {
       console.log(`   📊 ${coinName} RSI: ${rsi.toFixed(1)}`);
       
       if (rsi > spikeFilter.maxRSI) {
         console.log(`   ⛔ ${coinName} RSI ${rsi.toFixed(1)} > ${spikeFilter.maxRSI} → 급등 매수 차단 (과매수)`);
-        // 알림 없이 차단만 (알림 피로도 방지)
         lastVolumeSpike.set(market, {
           spikeRatio,
           tradePrice,
@@ -938,16 +937,8 @@ const handleVolumeSpike = async (spikeData) => {
         return;
       }
     } else {
-      // RSI 조회 실패 시 보수적으로 차단 (안전 우선)
-      console.log(`   ⚠️ ${coinName} RSI 조회 실패 → 급등 매수 보류 (안전 우선)`);
-      lastVolumeSpike.set(market, {
-        spikeRatio,
-        tradePrice,
-        timestamp: Date.now(),
-        blocked: true,
-        blockReason: 'RSI 조회 실패'
-      });
-      return;
+      // RSI 조회 실패 → 고점 필터로 대체 (기회 유지)
+      console.log(`   ⚠️ ${coinName} RSI 조회 실패 → 고점 필터로 진행`);
     }
     
     // 2. 최근 고점 대비 체크 (고점 근처 매수 방지)
