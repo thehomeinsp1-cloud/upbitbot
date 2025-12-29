@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('./config');
 const upbit = require('./upbit');
-const { sendTelegramMessage, sendTelegramMessageWithButtons } = require('./telegram');
+const { sendTelegramMessage, sendTelegramMessageWithButtons, sendErrorAlert } = require('./telegram');
 const { fetchRSIForTrader } = require('./indicators');
 const database = require('./database');
 
@@ -446,6 +446,8 @@ const executeBuy = async (market, analysis) => {
 
   } catch (error) {
     console.error(`❌ ${coinName} 매수 실패:`, error.message);
+    // 🚨 중요 에러는 텔레그램으로 알림!
+    await sendErrorAlert(`❌ ${coinName} 매수 실패!\n\n오류: ${error.message}`);
     return null;
   }
 };
@@ -564,6 +566,8 @@ const executeSell = async (market, reason, currentPrice) => {
 
   } catch (error) {
     console.error(`❌ ${coinName} 매도 실패:`, error.message);
+    // 🚨 중요 에러는 텔레그램으로 알림!
+    await sendErrorAlert(`❌ ${coinName} 매도 실패!\n\n사유: ${reason}\n오류: ${error.message}`);
     return null;
   }
 };
@@ -831,8 +835,8 @@ const monitorPositions = async () => {
       console.error(`   ❌ ${position.coinName} 모니터링 오류:`, error.message);
     }
     
-    // API 속도 제한
-    await new Promise(r => setTimeout(r, 300));
+    // API 속도 제한 (300→500)
+    await new Promise(r => setTimeout(r, 500));
   }
 };
 

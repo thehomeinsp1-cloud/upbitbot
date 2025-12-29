@@ -1,6 +1,6 @@
 /**
- * 🚀 암호화폐 자동매매 봇 v5.8.2
- * 웹소켓 실시간 + ATR 트레일링 + 조기 익절 + 눌림목 매수
+ * 🚀 암호화폐 자동매매 봇 v5.8.4
+ * API Rate Limit 안정화 + 에러 알림 강화
  * Render.com 배포 버전
  */
 
@@ -182,7 +182,7 @@ const generateDashboardHTML = () => {
 </head>
 <body>
   <div class="container">
-    <h1>🤖 자동매매 봇 <span>v5.8.3</span></h1>
+    <h1>🤖 자동매매 봇 <span>v5.8.4</span></h1>
     
     <div class="nav-tabs">
       <a href="/" class="nav-tab active">📊 대시보드</a>
@@ -898,7 +898,7 @@ const analyzeAndAlert = async (market, styleKey = null, styleConfig = null) => {
     // 기술적 점수가 60점 이상인 코인만 뉴스 체크 (API 호출 최적화)
     if (technicalScore >= 60 && config.USE_NEWS_ANALYSIS && !styleKey) {
       newsData = await fetchCoinNews(market, 3);
-      await sleep(300); // API 속도 제한
+      await sleep(500); // API 속도 제한 (300→500)
     }
     
     // 최종 점수 계산 (기술적 90% + 뉴스 10%)
@@ -1284,8 +1284,8 @@ const runFullAnalysis = async () => {
       
       let styleSignalCount = 0;
       
-      // 🚀 병렬 처리 (3개씩 동시 분석)
-      const BATCH_SIZE = 3;
+      // 🚀 병렬 처리 (2개씩 동시 분석 - API 제한 고려)
+      const BATCH_SIZE = 2;
       for (let i = 0; i < watchCoins.length; i += BATCH_SIZE) {
         const batch = watchCoins.slice(i, i + BATCH_SIZE);
         
@@ -1304,18 +1304,18 @@ const runFullAnalysis = async () => {
           }
         });
         
-        // 배치 간 휴식 (API 속도 제한)
-        await sleep(500);
+        // 배치 간 휴식 (API 속도 제한 - 1초)
+        await sleep(1000);
       }
       
       log(`✅ ${styleConfig.name} 완료 (신호: ${styleSignalCount}개)`);
       
       // 스타일 간 휴식
-      await sleep(500);
+      await sleep(1000);
     }
   } else {
-    // 기본 분석 (단타) - 병렬 처리
-    const BATCH_SIZE = 3;
+    // 기본 분석 (단타) - 병렬 처리 (2개씩)
+    const BATCH_SIZE = 2;
     for (let i = 0; i < watchCoins.length; i += BATCH_SIZE) {
       const batch = watchCoins.slice(i, i + BATCH_SIZE);
       
@@ -1329,7 +1329,7 @@ const runFullAnalysis = async () => {
         }
       });
       
-      await sleep(500);
+      await sleep(1000);
     }
   }
 
@@ -1719,8 +1719,8 @@ const scanPullbackOpportunities = async () => {
         }
       }
       
-      // API 속도 제한
-      await sleep(200);
+      // API 속도 제한 (200→500)
+      await sleep(500);
       
     } catch (error) {
       // 개별 코인 오류는 무시하고 계속
