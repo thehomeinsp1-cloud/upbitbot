@@ -182,7 +182,7 @@ const generateDashboardHTML = () => {
 </head>
 <body>
   <div class="container">
-    <h1>🤖 자동매매 봇 <span>v5.8.2</span></h1>
+    <h1>🤖 자동매매 봇 <span>v5.8.3</span></h1>
     
     <div class="nav-tabs">
       <a href="/" class="nav-tab active">📊 대시보드</a>
@@ -933,19 +933,44 @@ const analyzeAndAlert = async (market, styleKey = null, styleConfig = null) => {
     // 스타일별 알림 기준 적용
     const alertThreshold = styleConfig?.alert_threshold || config.ALERT_THRESHOLD;
     const minScore = config.AUTO_TRADE.minScore || 78;
+    const maxScore = config.AUTO_TRADE.maxScore || 100; // 🆕 v5.8.3 최대 점수
+    const antiFomo = config.ANTI_FOMO || {};
     const cooldown = styleConfig?.cooldown || config.ALERT_COOLDOWN;
     const alertKey = styleKey ? `${market}_${styleKey}` : market;
 
     // 📊 분석 결과 로그 (급등 감지 후)
     if (volumeSpike && !volumeSpike.blocked) {
-      if (finalScore >= minScore) {
+      if (finalScore >= minScore && finalScore <= maxScore) {
         console.log(`   ✅ ${coinName} 분석 완료: ${finalScore.toFixed(0)}점 → 매수 조건 충족!`);
+      } else if (finalScore > maxScore) {
+        console.log(`   🚫 ${coinName} 분석 완료: ${finalScore.toFixed(0)}점 > ${maxScore}점 → 고점 신호! 매수 차단`);
       } else {
         console.log(`   ⏸️ ${coinName} 분석 완료: ${finalScore.toFixed(0)}점 < ${minScore}점 → 매수 스킵`);
       }
     }
 
-    // 강력 매수 신호
+    // 🚫 최대 점수 초과 시 차단 (고점 추격 방지)
+    if (antiFomo.enabled && finalScore > maxScore) {
+      console.log(`   🚫 ${coinName} 점수 ${finalScore.toFixed(0)} > ${maxScore} → 고점 신호로 판단, 알림만 발송`);
+      // 알림은 보내되 자동매수는 하지 않음 (참고용)
+      if (finalScore >= alertThreshold) {
+        const lastAlert = lastAlerts[alertKey];
+        const now = Date.now();
+        
+        if (!lastAlert || (now - lastAlert) > cooldown) {
+          lastAlerts[alertKey] = now;
+          
+          // 고점 경고 포함된 메시지 발송
+          analysis.highScoreWarning = true;
+          const message = formatAlertMessage(analysis);
+          await sendTelegramAlert(message, coinName);
+          log(`⚠️ ${coinName} 고점 경고 알림 발송 (${finalScore.toFixed(0)}점 - 자동매수 차단)`);
+        }
+      }
+      return analysis;
+    }
+
+    // 강력 매수 신호 (점수 범위 내)
     if (finalScore >= alertThreshold) {
       const lastAlert = lastAlerts[alertKey];
       const now = Date.now();
@@ -1006,7 +1031,16 @@ const formatAlertMessage = (analysis) => {
   const volumeSpike = getVolumeSpikeInfo(analysis.market);
   const spikeTag = volumeSpike ? ' ⚡급등' : '';
   
-  let message = `🚀 *${coinName} ${styleName} 매수 신호!${spikeTag}*\n\n`;
+  // 🚫 고점 경고 체크 (v5.8.3)
+  const highScoreWarning = analysis.highScoreWarning;
+  
+  let message;
+  if (highScoreWarning) {
+    message = `⚠️ *${coinName} 고점 경고!${spikeTag}*\n`;
+    message += `🚫 *점수 ${analysis.finalScore}점 > 84점 → 자동매수 차단*\n\n`;
+  } else {
+    message = `🚀 *${coinName} ${styleName} 매수 신호!${spikeTag}*\n\n`;
+  }
   
   // 거래량 급등 정보 표시
   if (volumeSpike) {
@@ -1388,7 +1422,8 @@ const handleVolumeSpike = async (spikeData) => {
   console.log(`\n⚡ 급등 감지! ${coinName} 필터 체크 중...`);
   
   try {
-    const spikeFilter = config.SPIKE_FILTER || { enabled: true, maxRSI: 65, minDistanceFromHigh: 2 };
+    const spikeFilter = config.SPIKE_FILTER || { enabled: true, maxRSI: 55, minDistanceFromHigh: 3 };
+    const antiFomo = config.ANTI_FOMO || { enabled: true, maxScore: 84, maxDailyChange: 10, maxHourlyChange: 5 };
     
     // 급등 필터 비활성화 시 바로 분석 진행
     if (!spikeFilter.enabled) {
@@ -1399,43 +1434,82 @@ const handleVolumeSpike = async (spikeData) => {
     }
     
     // ============================================
-    // 🛡️ 옵션 A: 급등 필터 (고점 매수 방지)
+    // 🚫 v5.8.3 고점 추격 방지 (ANTI_FOMO)
     // ============================================
     
-    // 1. RSI 체크 (과매수 방지) - 실패 시 고점 필터로 대체
+    if (antiFomo.enabled) {
+      // 1. 당일 상승률 체크
+      const dailyChange = await fetchDailyChange(market);
+      if (dailyChange !== null && dailyChange > antiFomo.maxDailyChange) {
+        console.log(`   🚫 ${coinName} 당일 ${dailyChange.toFixed(1)}% 상승 > ${antiFomo.maxDailyChange}% → 고점 추격 차단!`);
+        lastVolumeSpike.set(market, {
+          spikeRatio, tradePrice, timestamp: Date.now(),
+          blocked: true,
+          blockReason: `당일 ${dailyChange.toFixed(1)}% 급등 (한계: ${antiFomo.maxDailyChange}%)`
+        });
+        return;
+      }
+      
+      // 2. 1시간 상승률 체크
+      const hourlyChange = await fetchHourlyChange(market);
+      if (hourlyChange !== null && hourlyChange > antiFomo.maxHourlyChange) {
+        console.log(`   🚫 ${coinName} 1시간 ${hourlyChange.toFixed(1)}% 상승 > ${antiFomo.maxHourlyChange}% → 고점 추격 차단!`);
+        lastVolumeSpike.set(market, {
+          spikeRatio, tradePrice, timestamp: Date.now(),
+          blocked: true,
+          blockReason: `1시간 ${hourlyChange.toFixed(1)}% 급등`
+        });
+        return;
+      }
+      
+      console.log(`   ✅ ${coinName} 상승률 체크 통과 (당일 ${dailyChange?.toFixed(1) || '?'}%, 1시간 ${hourlyChange?.toFixed(1) || '?'}%)`);
+    }
+    
+    // ============================================
+    // 🛡️ RSI 필터 (과매수 방지) - 강화!
+    // ============================================
+    
     const rsi = await trader.fetchRSI(market);
     if (rsi !== null) {
       console.log(`   📊 ${coinName} RSI: ${rsi.toFixed(1)}`);
       
       if (rsi > spikeFilter.maxRSI) {
-        console.log(`   ⛔ ${coinName} RSI ${rsi.toFixed(1)} > ${spikeFilter.maxRSI} → 급등 매수 차단 (과매수)`);
+        console.log(`   ⛔ ${coinName} RSI ${rsi.toFixed(1)} > ${spikeFilter.maxRSI} → 과매수 차단!`);
         lastVolumeSpike.set(market, {
-          spikeRatio,
-          tradePrice,
-          timestamp: Date.now(),
+          spikeRatio, tradePrice, timestamp: Date.now(),
           blocked: true,
           blockReason: `RSI ${rsi.toFixed(1)} > ${spikeFilter.maxRSI}`
         });
         return;
       }
     } else {
-      // RSI 조회 실패 → 고점 필터로 대체 (기회 유지)
-      console.log(`   ⚠️ ${coinName} RSI 조회 실패 → 고점 필터로 진행`);
+      // RSI 조회 실패 시 처리
+      if (spikeFilter.blockOnRSIError) {
+        console.log(`   ⛔ ${coinName} RSI 조회 실패 → 안전을 위해 차단`);
+        lastVolumeSpike.set(market, {
+          spikeRatio, tradePrice, timestamp: Date.now(),
+          blocked: true,
+          blockReason: 'RSI 조회 실패'
+        });
+        return;
+      } else {
+        console.log(`   ⚠️ ${coinName} RSI 조회 실패 → 고점 필터로 진행`);
+      }
     }
     
-    // 2. 최근 고점 대비 체크 (고점 근처 매수 방지)
+    // ============================================
+    // 📈 최근 고점 대비 체크 (고점 근처 매수 방지)
+    // ============================================
+    
     const recentHigh = await fetchRecentHigh(market);
     if (recentHigh) {
       const distanceFromHigh = ((recentHigh - tradePrice) / recentHigh) * 100;
       console.log(`   📈 ${coinName} 최근 고점: ${recentHigh.toLocaleString()}원 (현재가 대비 ${distanceFromHigh.toFixed(1)}% 아래)`);
       
       if (distanceFromHigh < spikeFilter.minDistanceFromHigh) {
-        console.log(`   ⛔ ${coinName} 고점 근처 (${distanceFromHigh.toFixed(1)}% < ${spikeFilter.minDistanceFromHigh}%) → 급등 매수 차단`);
-        // 알림 없이 차단만 (알림 피로도 방지)
+        console.log(`   ⛔ ${coinName} 고점 근처 (${distanceFromHigh.toFixed(1)}% < ${spikeFilter.minDistanceFromHigh}%) → 차단`);
         lastVolumeSpike.set(market, {
-          spikeRatio,
-          tradePrice,
-          timestamp: Date.now(),
+          spikeRatio, tradePrice, timestamp: Date.now(),
           blocked: true,
           blockReason: `고점 근처 ${distanceFromHigh.toFixed(1)}%`
         });
@@ -1461,6 +1535,38 @@ const handleVolumeSpike = async (spikeData) => {
     
   } catch (error) {
     console.error(`❌ 급등 분석 오류: ${error.message}`);
+  }
+};
+
+// 당일 상승률 조회
+const fetchDailyChange = async (market) => {
+  try {
+    const response = await fetch(`https://api.upbit.com/v1/ticker?markets=${market}`);
+    const data = await response.json();
+    if (data && data[0]) {
+      return data[0].signed_change_rate * 100; // 퍼센트로 변환
+    }
+    return null;
+  } catch (error) {
+    console.error(`당일 상승률 조회 실패 (${market}):`, error.message);
+    return null;
+  }
+};
+
+// 1시간 상승률 조회
+const fetchHourlyChange = async (market) => {
+  try {
+    const response = await fetch(`https://api.upbit.com/v1/candles/minutes/60?market=${market}&count=2`);
+    const candles = await response.json();
+    if (candles && candles.length >= 2) {
+      const current = candles[0].trade_price;
+      const hourAgo = candles[1].opening_price;
+      return ((current - hourAgo) / hourAgo) * 100;
+    }
+    return null;
+  } catch (error) {
+    console.error(`1시간 상승률 조회 실패 (${market}):`, error.message);
+    return null;
   }
 };
 

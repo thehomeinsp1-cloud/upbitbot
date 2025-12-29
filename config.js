@@ -1,6 +1,6 @@
 /**
- * ⚙️ 설정 파일 v5.8
- * 웹소켓 실시간 + 자동매매 + 조기 익절 시스템
+ * ⚙️ 설정 파일 v5.8.3
+ * 웹소켓 실시간 + 자동매매 + 고점추격 방지 강화
  */
 
 module.exports = {
@@ -23,14 +23,23 @@ module.exports = {
   // ============================================
   
   USE_WEBSOCKET: true,           // 웹소켓 실시간 모니터링
-  VOLUME_SPIKE_MULTIPLIER: 3.0,  // 거래량 급등 기준 (평균 대비 배수)
+  VOLUME_SPIKE_MULTIPLIER: 2.0,  // 거래량 급등 기준 (3.0→2.0 초기 포착!)
   SPIKE_ANALYSIS_THRESHOLD: 70,  // 급등 시 분석 알림 기준 점수
   
-  // 🛡️ 급등 필터 설정 (v5.8 옵션 A)
+  // 🛡️ 급등 필터 설정 (v5.8.3 강화!)
   SPIKE_FILTER: {
     enabled: true,               // 급등 필터 활성화
-    maxRSI: 65,                  // RSI가 이 값 이상이면 매수 차단
-    minDistanceFromHigh: 2,      // 고점 대비 최소 이격도 (%)
+    maxRSI: 55,                  // RSI 상한 강화 (65→55)
+    minDistanceFromHigh: 3,      // 고점 대비 최소 이격도 (2→3%)
+    blockOnRSIError: true,       // RSI 조회 실패 시 매수 차단 (신규!)
+  },
+  
+  // 🚫 고점 추격 방지 (v5.8.3 신규!)
+  ANTI_FOMO: {
+    enabled: true,
+    maxScore: 84,                // 84점 초과 시 매수 차단 (고점 신호)
+    maxDailyChange: 10,          // 당일 10% 이상 상승 시 매수 차단
+    maxHourlyChange: 5,          // 1시간 5% 이상 상승 시 매수 차단
   },
 
   // ============================================
@@ -51,18 +60,34 @@ module.exports = {
     takeProfitPercent: 6,       // 익절 +6% (현실적 목표)
     dailyLossLimit: 300000,     // 일일 손실 한도 (30만원)
     
-    // 🎯 조기 익절 설정 (v5.8 신규!)
+    // 🎯 조기 익절 + 트레일링 스탑 (v5.8.3 개선!)
     earlyProfit: {
       enabled: true,            // 조기 익절 활성화
       breakEvenAt: 1.5,         // 1.5% 수익 시 손절선을 본전으로
       firstTakeAt: 2.0,         // 2% 도달 시 30% 부분 익절
-      secondTakeAt: 4.0,        // 4% 도달 시 추가 30% 부분 익절
       firstTakeRatio: 0.3,      // 1차 익절 비율 (30%)
-      secondTakeRatio: 0.5,     // 2차 익절 비율 (남은 것의 50% = 전체 35%)
+      // 나머지 70%는 트레일링 스탑으로 관리!
+    },
+    
+    // 🚀 트레일링 스탑 (v5.8.3 신규!) - 100% 상승도 추적!
+    trailingStop: {
+      enabled: true,            // 트레일링 스탑 활성화
+      activateAt: 3,            // 3% 수익 시 트레일링 활성화
+      trailPercent: 5,          // 고점 대비 5% 하락 시 매도
+      // 예: 진입가 100원
+      // 1. 103원 (+3%) → 트레일링 활성화
+      // 2. 150원 (+50%) → 고점 갱신
+      // 3. 142.5원 (-5% from high) → 매도! (+42.5% 수익)
+      
+      // 🔥 대박 모드: 큰 수익 시 트레일 완화
+      bigProfitAt: 20,          // 20% 수익 시 대박 모드
+      bigProfitTrail: 8,        // 대박 모드에서는 8% 하락까지 허용
+      // 예: +50% 수익 중 → 8% 하락해도 보유 → 더 큰 상승 추적
     },
     
     // ⏱ 매매 조건
     minScore: 78,               // 최소 매수 점수
+    maxScore: 84,               // 최대 매수 점수 (v5.8.3 신규!)
     cooldownMinutes: 30,        // 같은 코인 재매수 대기 (분)
   },
   

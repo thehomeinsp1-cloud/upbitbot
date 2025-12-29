@@ -1,7 +1,7 @@
 /**
- * 🤖 자동매매 트레이더 모듈 v5.8.2
- * 매수/매도 결정 및 포지션 관리 + MongoDB 영구 저장
- * 조기 익절 시스템: 1.5% 본전 이동 + 2%/4% 단계별 부분 익절
+ * 🤖 자동매매 트레이더 모듈 v5.8.3
+ * 트레일링 스탑 중심 - 100% 상승도 끝까지 추적!
+ * 30% 조기 익절 + 70% 트레일링 스탑
  */
 
 const fs = require('fs');
@@ -662,13 +662,21 @@ const checkBuyConditions = async (market, analysis) => {
 };
 
 // ============================================
-// 📊 포지션 모니터링 (동적 익절 - 옵션 C)
+// 📊 포지션 모니터링 (v5.8.3 - 트레일링 스탑 중심!)
 // ============================================
 
 const monitorPositions = async () => {
   if (positions.size === 0) return;
   
   console.log(`\n🔍 포지션 모니터링 (${positions.size}개)...`);
+  
+  const trailingConfig = config.AUTO_TRADE.trailingStop || {
+    enabled: true,
+    activateAt: 3,
+    trailPercent: 5,
+    bigProfitAt: 20,
+    bigProfitTrail: 8
+  };
   
   for (const [market, position] of positions) {
     try {
@@ -679,13 +687,25 @@ const monitorPositions = async () => {
       const currentPrice = ticker.trade_price;
       const pnlPercent = ((currentPrice / position.entryPrice) - 1) * 100;
       
+      // 최고가 갱신
+      if (!position.highPrice || currentPrice > position.highPrice) {
+        position.highPrice = currentPrice;
+        position.highPnlPercent = pnlPercent;
+        savePositions();
+      }
+      
       // 보유 시간 계산
       const holdingHours = (Date.now() - new Date(position.entryTime).getTime()) / (1000 * 60 * 60);
       
-      console.log(`   ${position.coinName}: ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}% (${currentPrice.toLocaleString()}원) [${holdingHours.toFixed(1)}시간]`);
+      // 고점 대비 하락률
+      const dropFromHigh = position.highPrice > 0 
+        ? ((position.highPrice - currentPrice) / position.highPrice) * 100 
+        : 0;
+      
+      console.log(`   ${position.coinName}: ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}% (최고: +${(position.highPnlPercent || pnlPercent).toFixed(1)}%, 고점대비: -${dropFromHigh.toFixed(1)}%) [${holdingHours.toFixed(1)}h]`);
       
       // ============================================
-      // 1️⃣ 손절 체크 (ATR 기반)
+      // 1️⃣ 손절 체크 (고정)
       // ============================================
       if (currentPrice <= position.stopLoss) {
         const lossPercent = ((currentPrice / position.entryPrice) - 1) * 100;
@@ -695,187 +715,116 @@ const monitorPositions = async () => {
       }
       
       // ============================================
-      // 1.3️⃣ 조기 본전 이동 (1.5% 수익 시) - v5.8 신규!
+      // 2️⃣ 조기 본전 이동 (1.5% 수익 시)
       // ============================================
       const earlyConfig = config.AUTO_TRADE.earlyProfit;
       if (earlyConfig?.enabled && pnlPercent >= earlyConfig.breakEvenAt && !position.breakEvenMoved) {
         position.breakEvenMoved = true;
-        position.stopLoss = position.entryPrice * 1.001; // 본전 + 0.1% (수수료 커버)
+        position.stopLoss = position.entryPrice * 1.001; // 본전 + 0.1%
         savePositions();
-        console.log(`   🛡️ ${position.coinName} 조기 본전 이동! (+${pnlPercent.toFixed(1)}% 달성)`);
+        console.log(`   🛡️ ${position.coinName} 본전 이동! (+${pnlPercent.toFixed(1)}%)`);
         
         await sendTelegramMessage(
           `🛡️ *손절선 본전 이동!*\n\n` +
           `💰 ${position.coinName}\n` +
           `📈 현재 수익: +${pnlPercent.toFixed(1)}%\n` +
           `🎯 손절선: ${Math.round(position.stopLoss).toLocaleString()}원\n\n` +
-          `💡 이제 손실 없이 안전하게 보유 중!`
+          `💡 이제 손실 없이 안전하게 보유!`
         );
       }
       
       // ============================================
-      // 1.4️⃣ 조기 1차 익절 (2% 수익 시 30% 매도) - v5.8 신규!
+      // 3️⃣ 1차 부분 익절 (2% 수익 시 30%)
       // ============================================
       if (earlyConfig?.enabled && pnlPercent >= earlyConfig.firstTakeAt && !position.earlyFirstTaken) {
         position.earlyFirstTaken = true;
         savePositions();
-        console.log(`   💰 ${position.coinName} 1차 조기 익절! (+${pnlPercent.toFixed(1)}%)`);
-        await executePartialSell(market, earlyConfig.firstTakeRatio, `1차 조기 익절 (+${pnlPercent.toFixed(1)}%)`, currentPrice);
+        console.log(`   💰 ${position.coinName} 1차 익절 30%! (+${pnlPercent.toFixed(1)}%)`);
+        await executePartialSell(market, earlyConfig.firstTakeRatio, `1차 익절 (+${pnlPercent.toFixed(1)}%)`, currentPrice);
         continue;
       }
       
       // ============================================
-      // 1.45️⃣ 조기 2차 익절 (4% 수익 시 추가 50% 매도) - v5.8 신규!
+      // 4️⃣ 트레일링 스탑 활성화 (3% 이상)
       // ============================================
-      if (earlyConfig?.enabled && pnlPercent >= earlyConfig.secondTakeAt && position.earlyFirstTaken && !position.earlySecondTaken) {
-        position.earlySecondTaken = true;
-        savePositions();
-        console.log(`   💰 ${position.coinName} 2차 조기 익절! (+${pnlPercent.toFixed(1)}%)`);
-        await executePartialSell(market, earlyConfig.secondTakeRatio, `2차 조기 익절 (+${pnlPercent.toFixed(1)}%)`, currentPrice);
-        continue;
-      }
-      
-      // ============================================
-      // 1.5️⃣ 목표가 도달 시 전량 익절! (신규)
-      // ============================================
-      if (currentPrice >= position.takeProfit) {
-        console.log(`   🎯 ${position.coinName} 목표가 도달! 전량 익절`);
-        await executeSell(market, `목표가 익절 (+${pnlPercent.toFixed(1)}%)`, currentPrice);
-        continue;
-      }
-      
-      // ============================================
-      // 1.6️⃣ 안전 익절 (5% 이상이면 무조건 50% 익절) - 조건 완화!
-      // ============================================
-      if (pnlPercent >= 5 && !position.safeProfitTaken) {  // 7% → 5%
-        console.log(`   💰 ${position.coinName} 안전 익절! (+${pnlPercent.toFixed(1)}%)`);
-        position.safeProfitTaken = true;
-        savePositions();
-        await executePartialSell(market, 0.5, `안전 익절 50% (+${pnlPercent.toFixed(1)}%)`, currentPrice);
-        continue;
-      }
-      
-      // ============================================
-      // 2️⃣ RSI 기반 부분 익절 (조건 완화!)
-      // ============================================
-      if (pnlPercent >= 3) {  // 5% → 3%로 하향
-        const rsi = await fetchRSI(market);
+      if (trailingConfig.enabled && pnlPercent >= trailingConfig.activateAt) {
         
-        if (rsi !== null) {
-          console.log(`   📊 ${position.coinName} RSI: ${rsi.toFixed(1)}`);
-          
-          // 부분 익절 카운트 초기화
-          const partialSellCount = position.partialSellCount || 0;
-          
-          // RSI > 70: 1차 부분 익절 (30%) - 조건 완화 (75 → 70)
-          if (rsi > 70 && partialSellCount === 0 && pnlPercent >= 3) {  // 5% → 3%
-            console.log(`   🟡 ${position.coinName} RSI 과매수 1단계! (RSI: ${rsi.toFixed(1)})`);
-            await executePartialSell(market, 0.3, `RSI 과매수 1단계 (${rsi.toFixed(0)})`, currentPrice);
-            continue;
-          }
-          
-          // RSI > 75: 2차 부분 익절 (추가 30% = 전체의 42.9%) - 조건 완화 (80 → 75)
-          if (rsi > 75 && partialSellCount === 1 && pnlPercent >= 4) {  // 7% → 4%
-            console.log(`   🟡 ${position.coinName} RSI 과매수 2단계! (RSI: ${rsi.toFixed(1)})`);
-            await executePartialSell(market, 0.429, `RSI 과매수 2단계 (${rsi.toFixed(0)})`, currentPrice);
-            continue;
-          }
-          
-          // RSI > 80: 전량 익절 (극단적 과매수) - 조건 완화 (85 → 80)
-          if (rsi > 80 && pnlPercent >= 5) {  // 10% → 5%
-            console.log(`   🟢 ${position.coinName} RSI 극단적 과매수! 전량 익절`);
-            await executeSell(market, `RSI 극단 과매수 (${rsi.toFixed(0)})`, currentPrice);
-            continue;
-          }
-        }
-      }
-      
-      // ============================================
-      // 2.5️⃣ 거래량 감소 감지 (상승 끝 신호)
-      // ============================================
-      if (pnlPercent >= 3) {
-        const volumeData = await fetchVolumeAnalysis(market);
-        
-        if (volumeData) {
-          // 다이버전스: 가격 상승 + 거래량 급감 → 상승 끝 신호
-          if (volumeData.isDivergence && pnlPercent >= 5) {
-            console.log(`   ⚠️ ${position.coinName} 거래량 다이버전스 감지!`);
-            console.log(`      가격: +${volumeData.priceChange.toFixed(1)}% / 거래량: ${(volumeData.volumeChangeRatio * 100).toFixed(0)}%`);
-            
-            // 트레일링 스탑 강화 (ATR의 50%로 축소)
-            const tightTrailing = (position.trailingStopPercent || 3) * 0.5;
-            
-            if (!position.tightTrailingActivated) {
-              position.tightTrailingActivated = true;
-              position.trailingStopPercent = tightTrailing;
-              savePositions();
-              console.log(`   🔒 트레일링 스탑 강화! ${tightTrailing.toFixed(1)}%`);
-              
-              await sendTelegramMessage(
-                `⚠️ *거래량 다이버전스 감지!*\n\n` +
-                `💰 ${position.coinName}\n` +
-                `📈 가격: +${volumeData.priceChange.toFixed(1)}%\n` +
-                `📉 거래량: ${(volumeData.volumeChangeRatio * 100).toFixed(0)}% (감소)\n\n` +
-                `🔒 트레일링 스탑 강화: ${tightTrailing.toFixed(1)}%\n` +
-                `💡 상승 추세 약화 신호, 익절 준비`
-              );
-            }
-          }
-          
-          // 거래량 급감 경고 (다이버전스는 아니지만 주의)
-          if (volumeData.warning && !volumeData.isDivergence) {
-            console.log(`   📉 ${position.coinName} ${volumeData.warning} (${(volumeData.volumeChangeRatio * 100).toFixed(0)}%)`);
-          }
-        }
-      }
-      
-      // ============================================
-      // 3️⃣ 시간 기반 익절 (12시간 보유 + 2% 이상) - 조건 완화!
-      // ============================================
-      if (holdingHours >= 12 && pnlPercent >= 2) {  // 24시간/3% → 12시간/2%
-        console.log(`   ⏰ ${position.coinName} 12시간 보유 + 수익 → 익절`);
-        await executeSell(market, `시간 익절 (12h, +${pnlPercent.toFixed(1)}%)`, currentPrice);
-        continue;
-      }
-      
-      // ============================================
-      // 4️⃣ 트레일링 스탑 (나머지 물량)
-      // ============================================
-      const trailingPercent = position.trailingStopPercent || 3;
-      
-      if (pnlPercent >= 3) {  // 5% → 3%로 하향
-        // 최고가 갱신
-        if (currentPrice > position.highPrice) {
-          position.highPrice = currentPrice;
-          savePositions();
-          console.log(`   📈 ${position.coinName} 최고가 갱신: ${currentPrice.toLocaleString()}원`);
-        }
-        
-        // 트레일링 활성화
+        // 트레일링 활성화 알림 (최초 1회)
         if (!position.trailingActivated) {
           position.trailingActivated = true;
-          position.stopLoss = position.entryPrice; // 본절로 이동
+          position.stopLoss = position.entryPrice * 1.005; // 본전 + 0.5%
           savePositions();
-          console.log(`   🎯 ${position.coinName} 트레일링 스탑 활성화! (ATR: ${trailingPercent.toFixed(1)}%)`);
+          console.log(`   🚀 ${position.coinName} 트레일링 스탑 활성화!`);
+          
+          await sendTelegramMessage(
+            `🚀 *트레일링 스탑 활성화!*\n\n` +
+            `💰 ${position.coinName}\n` +
+            `📈 현재 수익: +${pnlPercent.toFixed(1)}%\n` +
+            `🎯 트레일: 고점 대비 -${trailingConfig.trailPercent}% 시 매도\n\n` +
+            `💡 상승하면 끝까지 추적합니다!`
+          );
         }
         
-        // 고점 대비 ATR*2 하락 시 전량 매도
-        const dropFromHigh = ((position.highPrice - currentPrice) / position.highPrice) * 100;
-        if (dropFromHigh >= trailingPercent) {
-          const finalPnl = ((currentPrice / position.entryPrice) - 1) * 100;
-          console.log(`   📉 ${position.coinName} 고점 대비 ${dropFromHigh.toFixed(1)}% 하락!`);
-          await executeSell(market, `트레일링 스탑 (+${finalPnl.toFixed(1)}%)`, currentPrice);
+        // 대박 모드 체크 (20% 이상)
+        const currentTrailPercent = pnlPercent >= trailingConfig.bigProfitAt 
+          ? trailingConfig.bigProfitTrail  // 대박 모드: 8%
+          : trailingConfig.trailPercent;   // 일반 모드: 5%
+        
+        // 대박 모드 진입 알림
+        if (pnlPercent >= trailingConfig.bigProfitAt && !position.bigProfitNotified) {
+          position.bigProfitNotified = true;
+          savePositions();
+          console.log(`   🔥 ${position.coinName} 대박 모드! 트레일 완화 ${currentTrailPercent}%`);
+          
+          await sendTelegramMessage(
+            `🔥 *대박 모드 진입!*\n\n` +
+            `💰 ${position.coinName}\n` +
+            `📈 현재 수익: +${pnlPercent.toFixed(1)}%\n` +
+            `🎯 트레일 완화: -${currentTrailPercent}%\n\n` +
+            `💡 더 큰 상승을 추적합니다!`
+          );
+        }
+        
+        // 트레일링 스탑 체크: 고점 대비 X% 하락 시 매도
+        if (dropFromHigh >= currentTrailPercent) {
+          const finalPnl = pnlPercent;
+          console.log(`   📉 ${position.coinName} 고점 대비 -${dropFromHigh.toFixed(1)}% → 트레일링 매도!`);
+          await executeSell(market, `트레일링 스탑 (고점 +${(position.highPnlPercent || 0).toFixed(1)}% → +${finalPnl.toFixed(1)}%)`, currentPrice);
+          continue;
+        }
+        
+        // 동적 손절선 업데이트 (수익 보호)
+        // 고점의 (100 - trailPercent)%를 손절선으로
+        const trailingStopPrice = position.highPrice * (1 - currentTrailPercent / 100);
+        if (trailingStopPrice > position.stopLoss) {
+          position.stopLoss = trailingStopPrice;
+          savePositions();
+          console.log(`   📈 ${position.coinName} 손절선 상향: ${Math.round(trailingStopPrice).toLocaleString()}원`);
+        }
+      }
+      
+      // ============================================
+      // 5️⃣ RSI 극단적 과매수 시 부분 익절 (선택적)
+      // ============================================
+      if (pnlPercent >= 10) {
+        const rsi = await fetchRSI(market);
+        
+        if (rsi !== null && rsi > 85 && !position.rsiExtremeSold) {
+          position.rsiExtremeSold = true;
+          savePositions();
+          console.log(`   ⚠️ ${position.coinName} RSI ${rsi.toFixed(0)} 극단 과매수! 30% 익절`);
+          await executePartialSell(market, 0.3, `RSI 극단 과매수 (${rsi.toFixed(0)})`, currentPrice);
           continue;
         }
       }
       
       // ============================================
-      // 5️⃣ 본절 안전장치 (3% 수익 시)
+      // 6️⃣ 시간 기반 익절 (24시간 보유 + 수익 중)
       // ============================================
-      if (pnlPercent >= 3 && position.stopLoss < position.entryPrice) {
-        position.stopLoss = position.entryPrice;
-        savePositions();
-        console.log(`   🛡️ ${position.coinName} 손절가 본절로 이동 (3% 수익 달성)`);
+      if (holdingHours >= 24 && pnlPercent >= 1) {
+        console.log(`   ⏰ ${position.coinName} 24시간 보유 + 수익 → 익절`);
+        await executeSell(market, `시간 익절 (24h, +${pnlPercent.toFixed(1)}%)`, currentPrice);
+        continue;
       }
       
     } catch (error) {
