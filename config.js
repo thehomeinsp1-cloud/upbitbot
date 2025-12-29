@@ -48,17 +48,17 @@ module.exports = {
   
   AUTO_TRADE: {
     enabled: true,              // 자동매매 활성화
-    testMode: true,             // 테스트 모드 (true = 실제 주문 안 함)
+    testMode: false,            // 🔴 실전 모드!
     
-    // 💰 자금 관리
-    maxInvestPerTrade: 1000000, // 1회 최대 매수 금액 (100만원)
-    maxTotalInvest: 5000000,    // 총 투자 한도 (500만원)
-    maxPositions: 5,            // 최대 보유 코인 수
+    // 💰 자금 관리 (소액 테스트!)
+    maxInvestPerTrade: 50000,   // 1회 최대 5만원
+    maxTotalInvest: 100000,     // 총 투자 한도 10만원
+    maxPositions: 2,            // 최대 2개만
     
     // 🛡️ 리스크 관리
     stopLossPercent: 3,         // 손절 -3%
-    takeProfitPercent: 6,       // 익절 +6% (현실적 목표)
-    dailyLossLimit: 300000,     // 일일 손실 한도 (30만원)
+    takeProfitPercent: 6,       // 익절 +6% (참고용, 트레일링이 메인)
+    dailyLossLimit: 30000,      // 일일 손실 한도 3만원
     
     // 🎯 조기 익절 + 트레일링 스탑 (v5.8.3 개선!)
     earlyProfit: {

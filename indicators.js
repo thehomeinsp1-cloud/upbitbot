@@ -1422,8 +1422,8 @@ module.exports = {
       const pullbackConfig = config.PULLBACK_BUY || {};
       if (!pullbackConfig.enabled) return null;
       
-      // 60분봉 100개 조회
-      const candles = await fetchCandles(market, 60, 100);
+      // 60분봉 100개 조회 - fetchCandles(market, count, unit)
+      const candles = await fetchCandles(market, 100, 60);
       if (!candles || candles.length < 50) return null;
       
       const closes = candles.map(c => c.trade_price);
@@ -1523,7 +1523,8 @@ module.exports = {
           console.log(`   🔄 RSI 재시도 ${retry}/${maxRetries} (${market})`);
         }
         
-        const candles = await fetchCandles(market, 60, period + 10);
+        // fetchCandles(market, count, unit) - 순서 수정!
+        const candles = await fetchCandles(market, period + 10, 60);
         if (!candles || candles.length < period + 1) {
           console.log(`   ⚠️ ${market} 캔들 데이터 부족 (${candles?.length || 0}개)`);
           return null;
@@ -1540,7 +1541,7 @@ module.exports = {
         return rsiResult.length > 0 ? rsiResult[rsiResult.length - 1] : null;
       } catch (error) {
         if (retry === maxRetries) {
-          console.error(`RSI 조회 실패 (${market}): Upbit API 오류: ${error.message}`);
+          console.error(`RSI 조회 실패 (${market}): ${error.message}`);
           return null;
         }
         // 재시도
