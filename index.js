@@ -806,9 +806,21 @@ const server = http.createServer((req, res) => {
   res.end(JSON.stringify(status, null, 2));
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`🌐 서버 실행 중: 포트 ${PORT}`);
   console.log(`📊 대시보드: http://localhost:${PORT}/`);
+  
+  // 🔍 서버 IP 주소 확인 (업비트 API 등록용)
+  try {
+    const response = await fetch('https://api.ipify.org?format=json');
+    const data = await response.json();
+    console.log(`\n${'='.repeat(50)}`);
+    console.log(`🌍 서버 IP 주소: ${data.ip}`);
+    console.log(`📝 이 IP를 업비트 Open API에 등록하세요!`);
+    console.log(`${'='.repeat(50)}\n`);
+  } catch (e) {
+    console.log('IP 확인 실패');
+  }
 });
 
 // ============================================
