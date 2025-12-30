@@ -1,6 +1,6 @@
 /**
- * ⚙️ 설정 파일 v5.8.3
- * 웹소켓 실시간 + 자동매매 + 고점추격 방지 강화
+ * ⚙️ 설정 파일 v5.8.5
+ * 필터 완화 - 거래 기회 확대!
  */
 
 module.exports = {
@@ -23,23 +23,23 @@ module.exports = {
   // ============================================
   
   USE_WEBSOCKET: true,           // 웹소켓 실시간 모니터링
-  VOLUME_SPIKE_MULTIPLIER: 2.0,  // 거래량 급등 기준 (3.0→2.0 초기 포착!)
+  VOLUME_SPIKE_MULTIPLIER: 2.0,  // 거래량 급등 기준 (평균 대비 2배)
   SPIKE_ANALYSIS_THRESHOLD: 70,  // 급등 시 분석 알림 기준 점수
   
-  // 🛡️ 급등 필터 설정 (v5.8.3 강화!)
+  // 🛡️ 급등 필터 설정 (v5.8.5 완화!)
   SPIKE_FILTER: {
     enabled: true,               // 급등 필터 활성화
-    maxRSI: 55,                  // RSI 상한 강화 (65→55)
-    minDistanceFromHigh: 3,      // 고점 대비 최소 이격도 (2→3%)
-    blockOnRSIError: true,       // RSI 조회 실패 시 매수 차단 (신규!)
+    maxRSI: 65,                  // RSI 상한 완화 (55→65)
+    minDistanceFromHigh: 2,      // 고점 대비 최소 이격도 (3→2%)
+    blockOnRSIError: false,      // RSI 조회 실패 시 통과 (차단→통과)
   },
   
-  // 🚫 고점 추격 방지 (v5.8.3 신규!)
+  // 🚫 고점 추격 방지 (v5.8.5 완화!)
   ANTI_FOMO: {
     enabled: true,
-    maxScore: 84,                // 84점 초과 시 매수 차단 (고점 신호)
-    maxDailyChange: 10,          // 당일 10% 이상 상승 시 매수 차단
-    maxHourlyChange: 5,          // 1시간 5% 이상 상승 시 매수 차단
+    maxScore: 90,                // 90점 초과 시 매수 차단 (84→90)
+    maxDailyChange: 20,          // 당일 20% 이상 상승 시 매수 차단 (10→20%)
+    maxHourlyChange: 10,         // 1시간 10% 이상 상승 시 매수 차단 (5→10%)
   },
 
   // ============================================
@@ -50,15 +50,15 @@ module.exports = {
     enabled: true,              // 자동매매 활성화
     testMode: false,            // 🔴 실전 모드!
     
-    // 💰 자금 관리 (소액 테스트!)
-    maxInvestPerTrade: 50000,   // 1회 최대 5만원
-    maxTotalInvest: 100000,     // 총 투자 한도 10만원
-    maxPositions: 2,            // 최대 2개만
+    // 💰 자금 관리 (실전!)
+    maxInvestPerTrade: 100000,  // 1회 최대 10만원
+    maxTotalInvest: 500000,     // 총 투자 한도 50만원
+    maxPositions: 5,            // 최대 5개
     
     // 🛡️ 리스크 관리
     stopLossPercent: 3,         // 손절 -3%
     takeProfitPercent: 6,       // 익절 +6% (참고용, 트레일링이 메인)
-    dailyLossLimit: 30000,      // 일일 손실 한도 3만원
+    dailyLossLimit: 100000,     // 일일 손실 한도 10만원
     
     // 🎯 조기 익절 + 트레일링 스탑 (v5.8.3 개선!)
     earlyProfit: {
@@ -87,7 +87,7 @@ module.exports = {
     
     // ⏱ 매매 조건
     minScore: 78,               // 최소 매수 점수
-    maxScore: 84,               // 최대 매수 점수 (v5.8.3 신규!)
+    maxScore: 90,               // 최대 매수 점수 (84→90 완화!)
     cooldownMinutes: 30,        // 같은 코인 재매수 대기 (분)
   },
   
@@ -98,15 +98,15 @@ module.exports = {
   PULLBACK_BUY: {
     enabled: true,              // 눌림목 매수 활성화
     
-    // 📊 진입 조건
-    minScore: 72,               // 눌림목은 점수 기준 완화 (급등보다 낮음)
-    rsiMin: 35,                 // RSI 하한 (너무 약하면 제외)
-    rsiMax: 50,                 // RSI 상한 (과매수 아닌 조정 구간)
+    // 📊 진입 조건 (v5.8.5 완화!)
+    minScore: 70,               // 눌림목 점수 기준 완화 (72→70)
+    rsiMin: 30,                 // RSI 하한 완화 (35→30)
+    rsiMax: 55,                 // RSI 상한 완화 (50→55)
     
     // 📈 추세 조건
     requireUptrend: true,       // 상승 추세 필수 (MA20 위)
-    minPullbackPercent: 3,      // 최근 고점 대비 최소 하락률 (%)
-    maxPullbackPercent: 10,     // 최근 고점 대비 최대 하락률 (%)
+    minPullbackPercent: 2,      // 최근 고점 대비 최소 하락률 (3→2%)
+    maxPullbackPercent: 15,     // 최근 고점 대비 최대 하락률 (10→15%)
     
     // 🔍 추가 필터
     requireBollingerLower: true, // 볼린저 하단 근처 필수

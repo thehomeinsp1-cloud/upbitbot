@@ -1,6 +1,6 @@
 /**
- * 🚀 암호화폐 자동매매 봇 v5.8.4
- * API Rate Limit 안정화 + 에러 알림 강화
+ * 🚀 암호화폐 자동매매 봇 v5.8.5
+ * 필터 완화 - 거래 기회 확대!
  * Render.com 배포 버전
  */
 
@@ -182,7 +182,7 @@ const generateDashboardHTML = () => {
 </head>
 <body>
   <div class="container">
-    <h1>🤖 자동매매 봇 <span>v5.8.4</span></h1>
+    <h1>🤖 자동매매 봇 <span>v5.8.5</span></h1>
     
     <div class="nav-tabs">
       <a href="/" class="nav-tab active">📊 대시보드</a>

@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
-  "version": "5.8.4",
-  "description": "암호화폐 자동매매 봇 - API안정화 + 에러알림 강화",
+  "version": "5.8.5",
+  "description": "암호화폐 자동매매 봇 - 필터완화 거래기회확대",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
