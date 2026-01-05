@@ -50,15 +50,15 @@ module.exports = {
     enabled: true,              // 자동매매 활성화
     testMode: false,            // 🔴 실전 모드!
     
-    // 💰 자금 관리 (실전!)
-    maxInvestPerTrade: 100000,  // 1회 최대 10만원
-    maxTotalInvest: 500000,     // 총 투자 한도 50만원
+    // 💰 자금 관리 (1500만원 시드 균형형!)
+    maxInvestPerTrade: 1500000, // 1회 최대 150만원
+    maxTotalInvest: 7500000,    // 총 투자 한도 750만원 (시드의 50%)
     maxPositions: 5,            // 최대 5개
     
     // 🛡️ 리스크 관리
     stopLossPercent: 3,         // 손절 -3%
     takeProfitPercent: 6,       // 익절 +6% (참고용, 트레일링이 메인)
-    dailyLossLimit: 100000,     // 일일 손실 한도 10만원
+    dailyLossLimit: 500000,     // 일일 손실 한도 50만원
     
     // 🎯 조기 익절 (v5.8.7)
     earlyProfit: {
