@@ -122,14 +122,18 @@ const getCoinBalance = async (currency) => {
 
 const buyMarket = async (market, price) => {
   try {
+    // 🆕 고유 식별자 추가 (임시번호 중복 방지)
+    const uniqueId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
     const body = {
       market: market,           // 'KRW-BTC'
       side: 'bid',              // 매수
       price: String(price),     // 매수 금액 (KRW)
       ord_type: 'price',        // 시장가 매수
+      identifier: uniqueId,     // 🆕 고유 식별자
     };
 
-    console.log(`🟢 매수 주문: ${market} / ${price.toLocaleString()}원`);
+    console.log(`🟢 매수 주문: ${market} / ${price.toLocaleString()}원 (ID: ${uniqueId})`);
     
     // 테스트 모드
     if (config.AUTO_TRADE.testMode) {
@@ -161,14 +165,18 @@ const buyMarket = async (market, price) => {
 
 const sellMarket = async (market, volume) => {
   try {
+    // 🆕 고유 식별자 추가 (임시번호 중복 방지)
+    const uniqueId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
     const body = {
       market: market,           // 'KRW-BTC'
       side: 'ask',              // 매도
       volume: String(volume),   // 매도 수량
       ord_type: 'market',       // 시장가 매도
+      identifier: uniqueId,     // 🆕 고유 식별자
     };
 
-    console.log(`🔴 매도 주문: ${market} / ${volume}`);
+    console.log(`🔴 매도 주문: ${market} / ${volume} (ID: ${uniqueId})`);
     
     // 테스트 모드
     if (config.AUTO_TRADE.testMode) {

@@ -50,9 +50,10 @@ module.exports = {
     enabled: true,              // 자동매매 활성화
     testMode: false,            // 🔴 실전 모드!
     
-    // 💰 자금 관리 (1500만원 시드 균형형!)
+    // 💰 자금 관리 (1단계 테스트: 2주)
     maxInvestPerTrade: 1500000, // 1회 최대 150만원
-    maxTotalInvest: 7500000,    // 총 투자 한도 750만원 (시드의 50%)
+    maxTotalInvest: 4500000,    // 총 투자 한도 450만원 (150만원 × 3개)
+    maxPositions: 3,            // 최대 3개 (테스트)
     maxPositions: 5,            // 최대 5개
     
     // 🛡️ 리스크 관리
