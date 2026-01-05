@@ -1,7 +1,7 @@
 {
   "name": "crypto-signal-bot",
-  "version": "5.8.6",
-  "description": "암호화폐 자동매매 봇 - 트레일링스탑 수익극대화",
+  "version": "5.8.7",
+  "description": "암호화폐 자동매매 봇 - ATR트레일링 빠른재진입 호가필터",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

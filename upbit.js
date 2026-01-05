@@ -282,6 +282,23 @@ const checkSlippage = async (market, investAmount, maxRatio = 0.3) => {
       if (i === 0) avgPrice = unit.ask_price; // 1호가 가격
     });
     
+    // 🆕 v5.8.7: 호가 괴리율 체크 (1호가~5호가 가격 차이)
+    const firstAskPrice = askUnits[0].ask_price;
+    const fifthAskPrice = askUnits[4]?.ask_price || askUnits[askUnits.length - 1].ask_price;
+    const priceGapPercent = ((fifthAskPrice - firstAskPrice) / firstAskPrice) * 100;
+    
+    // 호가 괴리율 1% 이상이면 매수 거부 (고점 꼬리 방지)
+    if (priceGapPercent > 1.0) {
+      return {
+        safe: false,
+        reason: `호가 괴리율 위험: 1호가~5호가 차이 ${priceGapPercent.toFixed(2)}% (한계: 1%)`,
+        avgPrice,
+        totalAskKRW,
+        priceGapPercent,
+        isGapTooWide: true
+      };
+    }
+    
     // 매수 금액이 5호가 합계의 maxRatio(30%) 이하인지 체크
     const ratio = investAmount / totalAskKRW;
     
@@ -306,7 +323,8 @@ const checkSlippage = async (market, investAmount, maxRatio = 0.3) => {
       totalAskKRW,
       ratio,
       expectedSlippage,
-      reason: `슬리피지 안전: 5호가 대비 ${(ratio * 100).toFixed(1)}%`
+      priceGapPercent,
+      reason: `슬리피지 안전: 5호가 대비 ${(ratio * 100).toFixed(1)}%, 괴리율 ${priceGapPercent.toFixed(2)}%`
     };
   } catch (error) {
     console.error('슬리피지 체크 실패:', error.message);

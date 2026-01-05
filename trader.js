@@ -1,7 +1,7 @@
 /**
- * 🤖 자동매매 트레이더 모듈 v5.8.3
- * 트레일링 스탑 중심 - 100% 상승도 끝까지 추적!
- * 30% 조기 익절 + 70% 트레일링 스탑
+ * 🤖 자동매매 트레이더 모듈 v5.8.7
+ * ATR 기반 동적 트레일링 스탑 + 빠른 재진입!
+ * 변동성 반영으로 털림 방지 & 수익 극대화
  */
 
 const fs = require('fs');
@@ -11,6 +11,9 @@ const upbit = require('./upbit');
 const { sendTelegramMessage, sendTelegramMessageWithButtons, sendErrorAlert } = require('./telegram');
 const { fetchRSIForTrader } = require('./indicators');
 const database = require('./database');
+
+// 🆕 익절 후 재진입을 위한 정보 저장
+const lastSellInfo = new Map(); // { market: { type, price, time, highPrice } }
 
 // ============================================
 // 📊 RSI 조회 (indicators.js 라이브러리 사용 - 일관성)
@@ -602,12 +605,37 @@ const checkBuyConditions = async (market, analysis) => {
     return { allowed: false, reason: '이미 보유 중' };
   }
 
-  // 5. 쿨다운 체크
+  // 5. 쿨다운 체크 (🆕 v5.8.7: 빠른 재진입 지원)
   const lastBuy = buyCooldowns.get(market);
+  const reEntryConfig = tradeConfig.reEntry || { enabled: false };
+  
   if (lastBuy) {
     const cooldownMs = tradeConfig.cooldownMinutes * 60 * 1000;
-    if (Date.now() - lastBuy < cooldownMs) {
-      const remainMin = Math.ceil((cooldownMs - (Date.now() - lastBuy)) / 60000);
+    const timeSinceLastBuy = Date.now() - lastBuy;
+    
+    // 🆕 빠른 재진입 체크
+    if (reEntryConfig.enabled && lastSellInfo.has(market)) {
+      const sellInfo = lastSellInfo.get(market);
+      const timeSinceSell = Date.now() - sellInfo.time;
+      const reEntryWindowMs = (reEntryConfig.cooldownOverrideMinutes || 5) * 60 * 1000;
+      
+      // 익절 후 5분 이내 + 전고점 돌파 시 쿨다운 무시
+      if (sellInfo.type === 'profit' && timeSinceSell < reEntryWindowMs) {
+        const currentPrice = analysis.currentPrice || 0;
+        
+        if (currentPrice > sellInfo.highPrice) {
+          console.log(`   🔄 ${coinName} 빠른 재진입! 전고점 ${sellInfo.highPrice.toLocaleString()}원 돌파`);
+          lastSellInfo.delete(market); // 재진입 정보 삭제
+          // 쿨다운 무시하고 진행
+        } else {
+          return { allowed: false, reason: `재진입 대기 (전고점 ${sellInfo.highPrice.toLocaleString()}원 미돌파)` };
+        }
+      } else if (timeSinceLastBuy < cooldownMs) {
+        const remainMin = Math.ceil((cooldownMs - timeSinceLastBuy) / 60000);
+        return { allowed: false, reason: `쿨다운 중 (${remainMin}분 남음)` };
+      }
+    } else if (timeSinceLastBuy < cooldownMs) {
+      const remainMin = Math.ceil((cooldownMs - timeSinceLastBuy) / 60000);
       return { allowed: false, reason: `쿨다운 중 (${remainMin}분 남음)` };
     }
   }
@@ -666,7 +694,7 @@ const checkBuyConditions = async (market, analysis) => {
 };
 
 // ============================================
-// 📊 포지션 모니터링 (v5.8.3 - 트레일링 스탑 중심!)
+// 📊 포지션 모니터링 (v5.8.7 - ATR 기반 트레일링!)
 // ============================================
 
 const monitorPositions = async () => {
@@ -677,10 +705,14 @@ const monitorPositions = async () => {
   const trailingConfig = config.AUTO_TRADE.trailingStop || {
     enabled: true,
     activateAt: 3,
-    trailPercent: 5,
-    bigProfitAt: 20,
-    bigProfitTrail: 8
+    mode: 'atr',
+    trailPercent: 4,
+    atrMultiplier: 2.0,
+    bigProfitAt: 15,
+    bigProfitMultiplier: 3.0
   };
+  
+  const reEntryConfig = config.AUTO_TRADE.reEntry || { enabled: false };
   
   for (const [market, position] of positions) {
     try {
@@ -706,7 +738,9 @@ const monitorPositions = async () => {
         ? ((position.highPrice - currentPrice) / position.highPrice) * 100 
         : 0;
       
-      console.log(`   ${position.coinName}: ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}% (최고: +${(position.highPnlPercent || pnlPercent).toFixed(1)}%, 고점대비: -${dropFromHigh.toFixed(1)}%) [${holdingHours.toFixed(1)}h]`);
+      // ATR 정보 표시
+      const atrInfo = position.atr ? ` ATR:${position.atr.toFixed(0)}` : '';
+      console.log(`   ${position.coinName}: ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}% (최고: +${(position.highPnlPercent || pnlPercent).toFixed(1)}%, 고점대비: -${dropFromHigh.toFixed(1)}%)${atrInfo} [${holdingHours.toFixed(1)}h]`);
       
       // ============================================
       // 1️⃣ 손절 체크 (고정)
@@ -714,12 +748,23 @@ const monitorPositions = async () => {
       if (currentPrice <= position.stopLoss) {
         const lossPercent = ((currentPrice / position.entryPrice) - 1) * 100;
         console.log(`   🔴 ${position.coinName} 손절가 도달!`);
+        
+        // 재진입 정보 저장 (손절은 재진입 X)
+        if (reEntryConfig.enabled) {
+          lastSellInfo.set(market, {
+            type: 'stoploss',
+            price: currentPrice,
+            time: Date.now(),
+            highPrice: position.highPrice
+          });
+        }
+        
         await executeSell(market, `손절 (${lossPercent.toFixed(1)}%)`, currentPrice);
         continue;
       }
       
       // ============================================
-      // 2️⃣ 조기 본전 이동 (1.5% 수익 시)
+      // 2️⃣ 조기 본전 이동 (2.5% 수익 시)
       // ============================================
       const earlyConfig = config.AUTO_TRADE.earlyProfit;
       if (earlyConfig?.enabled && pnlPercent >= earlyConfig.breakEvenAt && !position.breakEvenMoved) {
@@ -738,7 +783,7 @@ const monitorPositions = async () => {
       }
       
       // ============================================
-      // 3️⃣ 1차 부분 익절 (2% 수익 시 30%)
+      // 3️⃣ 1차 부분 익절 (3% 수익 시 30%)
       // ============================================
       if (earlyConfig?.enabled && pnlPercent >= earlyConfig.firstTakeAt && !position.earlyFirstTaken) {
         position.earlyFirstTaken = true;
@@ -749,7 +794,7 @@ const monitorPositions = async () => {
       }
       
       // ============================================
-      // 4️⃣ 트레일링 스탑 활성화 (3% 이상)
+      // 4️⃣ ATR 기반 트레일링 스탑 (핵심!)
       // ============================================
       if (trailingConfig.enabled && pnlPercent >= trailingConfig.activateAt) {
         
@@ -758,57 +803,88 @@ const monitorPositions = async () => {
           position.trailingActivated = true;
           position.stopLoss = position.entryPrice * 1.005; // 본전 + 0.5%
           savePositions();
-          console.log(`   🚀 ${position.coinName} 트레일링 스탑 활성화!`);
+          
+          const modeText = trailingConfig.mode === 'atr' ? 'ATR 기반' : '고정 %';
+          console.log(`   🚀 ${position.coinName} 트레일링 스탑 활성화! (${modeText})`);
           
           await sendTelegramMessage(
             `🚀 *트레일링 스탑 활성화!*\n\n` +
             `💰 ${position.coinName}\n` +
             `📈 현재 수익: +${pnlPercent.toFixed(1)}%\n` +
-            `🎯 트레일: 고점 대비 -${trailingConfig.trailPercent}% 시 매도\n\n` +
+            `📊 모드: ${modeText}\n\n` +
             `💡 상승하면 끝까지 추적합니다!`
           );
         }
         
-        // 대박 모드 체크 (20% 이상)
-        const currentTrailPercent = pnlPercent >= trailingConfig.bigProfitAt 
-          ? trailingConfig.bigProfitTrail  // 대박 모드: 8%
-          : trailingConfig.trailPercent;   // 일반 모드: 5%
+        // 🆕 ATR 기반 트레일링 거리 계산
+        let trailDistance = 0;
+        let trailPercent = 0;
+        
+        if (trailingConfig.mode === 'atr' && position.atr) {
+          // ATR 기반: 변동성 반영
+          const multiplier = pnlPercent >= trailingConfig.bigProfitAt 
+            ? trailingConfig.bigProfitMultiplier  // 대박 모드: ATR × 3
+            : trailingConfig.atrMultiplier;       // 일반 모드: ATR × 2
+          
+          trailDistance = position.atr * multiplier;
+          trailPercent = (trailDistance / currentPrice) * 100;
+          
+          console.log(`   📏 ATR 트레일링: ATR ${position.atr.toFixed(0)} × ${multiplier} = ${trailDistance.toFixed(0)}원 (-${trailPercent.toFixed(1)}%)`);
+        } else {
+          // 고정 % 방식 (fallback)
+          trailPercent = pnlPercent >= trailingConfig.bigProfitAt 
+            ? (trailingConfig.bigProfitTrail || 6)
+            : trailingConfig.trailPercent;
+          trailDistance = currentPrice * (trailPercent / 100);
+        }
         
         // 대박 모드 진입 알림
         if (pnlPercent >= trailingConfig.bigProfitAt && !position.bigProfitNotified) {
           position.bigProfitNotified = true;
           savePositions();
-          console.log(`   🔥 ${position.coinName} 대박 모드! 트레일 완화 ${currentTrailPercent}%`);
+          console.log(`   🔥 ${position.coinName} 대박 모드! 트레일 여유롭게`);
           
           await sendTelegramMessage(
             `🔥 *대박 모드 진입!*\n\n` +
             `💰 ${position.coinName}\n` +
             `📈 현재 수익: +${pnlPercent.toFixed(1)}%\n` +
-            `🎯 트레일 완화: -${currentTrailPercent}%\n\n` +
+            `📊 트레일 완화: -${trailPercent.toFixed(1)}%\n\n` +
             `💡 더 큰 상승을 추적합니다!`
           );
         }
         
-        // 트레일링 스탑 체크: 고점 대비 X% 하락 시 매도
-        if (dropFromHigh >= currentTrailPercent) {
-          const finalPnl = pnlPercent;
-          console.log(`   📉 ${position.coinName} 고점 대비 -${dropFromHigh.toFixed(1)}% → 트레일링 매도!`);
-          await executeSell(market, `트레일링 스탑 (고점 +${(position.highPnlPercent || 0).toFixed(1)}% → +${finalPnl.toFixed(1)}%)`, currentPrice);
-          continue;
+        // 동적 손절선 계산: 고점 - 트레일 거리
+        const newStopLoss = position.highPrice - trailDistance;
+        
+        // 손절선은 올라가기만 함 (내려가지 않음)
+        if (newStopLoss > position.stopLoss) {
+          position.stopLoss = newStopLoss;
+          savePositions();
+          console.log(`   📈 ${position.coinName} 손절선 상향: ${Math.round(newStopLoss).toLocaleString()}원`);
         }
         
-        // 동적 손절선 업데이트 (수익 보호)
-        // 고점의 (100 - trailPercent)%를 손절선으로
-        const trailingStopPrice = position.highPrice * (1 - currentTrailPercent / 100);
-        if (trailingStopPrice > position.stopLoss) {
-          position.stopLoss = trailingStopPrice;
-          savePositions();
-          console.log(`   📈 ${position.coinName} 손절선 상향: ${Math.round(trailingStopPrice).toLocaleString()}원`);
+        // 현재가가 손절선 이하면 매도
+        if (currentPrice <= position.stopLoss) {
+          const finalPnl = pnlPercent;
+          console.log(`   📉 ${position.coinName} 트레일링 손절선 도달 → 매도!`);
+          
+          // 재진입 정보 저장 (익절은 재진입 가능)
+          if (reEntryConfig.enabled && finalPnl > 0) {
+            lastSellInfo.set(market, {
+              type: 'profit',
+              price: currentPrice,
+              time: Date.now(),
+              highPrice: position.highPrice
+            });
+          }
+          
+          await executeSell(market, `트레일링 스탑 (고점 +${(position.highPnlPercent || 0).toFixed(1)}% → +${finalPnl.toFixed(1)}%)`, currentPrice);
+          continue;
         }
       }
       
       // ============================================
-      // 5️⃣ RSI 극단적 과매수 시 부분 익절 (선택적)
+      // 5️⃣ RSI 극단적 과매수 시 부분 익절
       // ============================================
       if (pnlPercent >= 10) {
         const rsi = await fetchRSI(market);
@@ -827,6 +903,17 @@ const monitorPositions = async () => {
       // ============================================
       if (holdingHours >= 24 && pnlPercent >= 1) {
         console.log(`   ⏰ ${position.coinName} 24시간 보유 + 수익 → 익절`);
+        
+        // 재진입 정보 저장
+        if (reEntryConfig.enabled) {
+          lastSellInfo.set(market, {
+            type: 'profit',
+            price: currentPrice,
+            time: Date.now(),
+            highPrice: position.highPrice
+          });
+        }
+        
         await executeSell(market, `시간 익절 (24h, +${pnlPercent.toFixed(1)}%)`, currentPrice);
         continue;
       }
@@ -835,7 +922,7 @@ const monitorPositions = async () => {
       console.error(`   ❌ ${position.coinName} 모니터링 오류:`, error.message);
     }
     
-    // API 속도 제한 (300→500)
+    // API 속도 제한
     await new Promise(r => setTimeout(r, 500));
   }
 };

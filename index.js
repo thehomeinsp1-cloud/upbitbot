@@ -1,6 +1,6 @@
 /**
- * 🚀 암호화폐 자동매매 봇 v5.8.6
- * 트레일링 스탑 개선 - 수익 극대화!
+ * 🚀 암호화폐 자동매매 봇 v5.8.7
+ * ATR 기반 트레일링 + 빠른 재진입 + 호가 괴리율 필터
  * Render.com 배포 버전
  */
 
@@ -182,7 +182,7 @@ const generateDashboardHTML = () => {
 </head>
 <body>
   <div class="container">
-    <h1>🤖 자동매매 봇 <span>v5.8.6</span></h1>
+    <h1>🤖 자동매매 봇 <span>v5.8.7</span></h1>
     
     <div class="nav-tabs">
       <a href="/" class="nav-tab active">📊 대시보드</a>
@@ -1409,17 +1409,17 @@ const sendStartupMessage = async () => {
   const autoTradeStatus = autoTradeConfig.enabled ? '✅' : '❌';
   const testModeStatus = autoTradeConfig.testMode ? '🧪 테스트' : '💰 실전';
     
-  const message = `🤖 *자동매매 봇 v5.8.6 시작!*\n\n` +
+  const message = `🤖 *자동매매 봇 v5.8.7 시작!*\n\n` +
     `📌 모니터링: ${watchCoins.length}개 코인\n` +
     `💰 거래대금 필터: ${volumeFilterStatus}\n\n` +
     `🤖 *자동매매 ${autoTradeStatus}*\n` +
     `• 모드: ${testModeStatus}\n` +
     `• 1회 매수: ${autoTradeConfig.maxInvestPerTrade.toLocaleString()}원\n` +
     `• 최대 포지션: ${autoTradeConfig.maxPositions}개\n\n` +
-    `🆕 *v5.8.6 업데이트:*\n` +
-    `• 🎯 본전 이동: +2.5%\n` +
-    `• 🚀 트레일링: +4% 활성화\n` +
-    `• 📈 수익 극대화 설정\n\n` +
+    `🆕 *v5.8.7 업데이트:*\n` +
+    `• 📊 ATR 기반 동적 트레일링\n` +
+    `• 🔄 익절 후 빠른 재진입\n` +
+    `• 🛡️ 호가 괴리율 필터\n\n` +
     `🖥 서버: Render.com (24시간)\n` +
     `⏰ ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`;
   
