@@ -1,6 +1,6 @@
 /**
- * ⚙️ 설정 파일 v5.8.7
- * ATR 기반 트레일링 + 빠른 재진입 + 호가 괴리율 필터
+ * ⚙️ 설정 파일 v5.9.0
+ * 🔥 스캘핑 전용 최적화 버전
  */
 
 module.exports = {
@@ -19,159 +19,143 @@ module.exports = {
   UPBIT_SECRET_KEY: process.env.UPBIT_SECRET_KEY || '',
 
   // ============================================
-  // 🔌 웹소켓 실시간 설정
+  // 🔌 웹소켓 실시간 설정 (스캘핑 핵심!)
   // ============================================
   
-  USE_WEBSOCKET: true,           // 웹소켓 실시간 모니터링
-  VOLUME_SPIKE_MULTIPLIER: 2.0,  // 거래량 급등 기준 (평균 대비 2배)
-  SPIKE_ANALYSIS_THRESHOLD: 70,  // 급등 시 분석 알림 기준 점수
+  USE_WEBSOCKET: true,
+  VOLUME_SPIKE_MULTIPLIER: 2.0,
+  SPIKE_ANALYSIS_THRESHOLD: 65,     // 🔥 급등 시 빠른 분석
   
-  // 🛡️ 급등 필터 설정 (v5.8.5 완화!)
+  // 🛡️ 급등 필터 (스캘핑용 완화)
   SPIKE_FILTER: {
-    enabled: true,               // 급등 필터 활성화
-    maxRSI: 65,                  // RSI 상한 완화 (55→65)
-    minDistanceFromHigh: 2,      // 고점 대비 최소 이격도 (3→2%)
-    blockOnRSIError: false,      // RSI 조회 실패 시 통과 (차단→통과)
+    enabled: true,
+    maxRSI: 70,                     // 🔥 65 → 70 완화
+    minDistanceFromHigh: 1.5,       // 🔥 2 → 1.5% 완화
+    blockOnRSIError: false,
   },
   
-  // 🚫 고점 추격 방지 (v5.8.5 완화!)
+  // 🚫 고점 추격 방지
   ANTI_FOMO: {
     enabled: true,
-    maxScore: 90,                // 90점 초과 시 매수 차단 (84→90)
-    maxDailyChange: 20,          // 당일 20% 이상 상승 시 매수 차단 (10→20%)
-    maxHourlyChange: 10,         // 1시간 10% 이상 상승 시 매수 차단 (5→10%)
+    maxScore: 92,                   // 🔥 90 → 92 완화
+    maxDailyChange: 15,             // 🔥 20 → 15% (스캘핑은 더 민감)
+    maxHourlyChange: 8,             // 🔥 10 → 8%
   },
 
   // ============================================
-  // 🤖 자동매매 설정
+  // 🤖 자동매매 설정 (스캘핑 최적화!)
   // ============================================
   
   AUTO_TRADE: {
-    enabled: true,              // 자동매매 활성화
-    testMode: true,             // 🧪 테스트 모드!
+    enabled: true,
+    testMode: true,                 // 🧪 테스트 모드!
     
-    // 💰 자금 관리 (1단계 테스트: 2주)
-    maxInvestPerTrade: 1500000, // 1회 최대 150만원
-    maxTotalInvest: 4500000,    // 총 투자 한도 450만원 (150만원 × 3개)
-    maxPositions: 3,            // 최대 3개 (테스트)
-    maxPositions: 5,            // 최대 5개
+    // 💰 자금 관리 (스캘핑: 소액 다회전)
+    maxInvestPerTrade: 500000,      // 🔥 150만 → 50만 (소액)
+    maxTotalInvest: 2000000,        // 🔥 450만 → 200만
+    maxPositions: 4,                // 🔥 3 → 4개 (빠른 회전)
     
-    // 🛡️ 리스크 관리
-    stopLossPercent: 3,         // 손절 -3%
-    takeProfitPercent: 6,       // 익절 +6% (참고용, 트레일링이 메인)
-    dailyLossLimit: 500000,     // 일일 손실 한도 50만원
+    // 🛡️ 리스크 관리 (스캘핑: 타이트!)
+    stopLossPercent: 2,             // 🔥 3% → 2%
+    takeProfitPercent: 3,           // 🔥 6% → 3%
+    dailyLossLimit: 300000,         // 🔥 50만 → 30만
     
-    // 🎯 조기 익절 (v5.8.7)
+    // 🎯 조기 익절 (스캘핑: 빠른 익절!)
     earlyProfit: {
-      enabled: true,            // 조기 익절 활성화
-      breakEvenAt: 2.5,         // 2.5% 수익 시 손절선을 본전으로
-      firstTakeAt: 3.0,         // 3% 도달 시 30% 부분 익절
-      firstTakeRatio: 0.3,      // 1차 익절 비율 (30%)
+      enabled: true,
+      breakEvenAt: 1.0,             // 🔥 2.5% → 1% (빠른 본전)
+      firstTakeAt: 1.5,             // 🔥 3% → 1.5% (빠른 1차 익절)
+      firstTakeRatio: 0.5,          // 🔥 30% → 50% (절반 먼저 익절)
     },
     
-    // 🚀 트레일링 스탑 (v5.8.7 대폭 개선!) - ATR 기반!
+    // 🚀 트레일링 스탑 (스캘핑: 타이트!)
     trailingStop: {
-      enabled: true,            // 트레일링 스탑 활성화
-      activateAt: 3,            // 3% 수익 시 트레일링 활성화
-      
-      // 📊 ATR 기반 동적 트레일링 (핵심!)
-      mode: 'atr',              // 'percent' 또는 'atr'
-      trailPercent: 4,          // percent 모드일 때 사용
-      atrMultiplier: 2.0,       // ATR의 2배 거리 유지 (변동성 반영)
-      
-      // 🔥 대박 모드
-      bigProfitAt: 15,          // 15% 수익 시 대박 모드
-      bigProfitMultiplier: 3.0, // 대박 구간에서는 ATR 3배 (여유있게)
-      
-      // 예시:
-      // ATR = 50원, 현재가 1000원
-      // 일반: 1000 - (50*2) = 950원에서 손절 (5% 거리)
-      // 대박: 1000 - (50*3) = 850원에서 손절 (15% 거리)
+      enabled: true,
+      activateAt: 1.5,              // 🔥 3% → 1.5% (빠른 활성화)
+      mode: 'atr',
+      trailPercent: 2,              // 🔥 4% → 2%
+      atrMultiplier: 1.5,           // 🔥 2.0 → 1.5 (타이트)
+      bigProfitAt: 5,               // 🔥 15% → 5%
+      bigProfitMultiplier: 2.0,     // 🔥 3.0 → 2.0
     },
     
-    // 🔄 빠른 재진입 (v5.8.7 신규!)
+    // 🔄 빠른 재진입 (스캘핑 핵심!)
     reEntry: {
-      enabled: true,            // 재진입 활성화
-      afterProfitOnly: true,    // 익절 후에만 재진입 (손절 후는 X)
-      cooldownOverrideMinutes: 5, // 익절 후 5분 내 전고점 돌파 시 쿨다운 무시
-      minVolumeSpike: 1.5,      // 재진입 시 거래량 1.5배 이상
+      enabled: true,
+      afterProfitOnly: true,
+      cooldownOverrideMinutes: 3,   // 🔥 5분 → 3분 (더 빠른 재진입)
+      minVolumeSpike: 1.3,          // 🔥 1.5 → 1.3 (낮은 기준)
     },
     
-    // ⏱ 매매 조건
-    minScore: 78,               // 최소 매수 점수
-    maxScore: 90,               // 최대 매수 점수
-    cooldownMinutes: 30,        // 같은 코인 재매수 대기 (분)
+    // ⏱ 매매 조건 (스캘핑: 민감!)
+    minScore: 68,                   // 🔥 72 → 68 (더 많은 기회)
+    maxScore: 92,
+    cooldownMinutes: 10,            // 🔥 30분 → 10분 (빠른 회전)
   },
   
   // ============================================
-  // 🎯 눌림목 매수 설정 (v5.8.1 신규!)
+  // 🎯 눌림목 매수 설정 (스캘핑용)
   // ============================================
   
   PULLBACK_BUY: {
-    enabled: true,              // 눌림목 매수 활성화
-    
-    // 📊 진입 조건 (v5.8.5 완화!)
-    minScore: 70,               // 눌림목 점수 기준 완화 (72→70)
-    rsiMin: 30,                 // RSI 하한 완화 (35→30)
-    rsiMax: 55,                 // RSI 상한 완화 (50→55)
-    
-    // 📈 추세 조건
-    requireUptrend: true,       // 상승 추세 필수 (MA20 위)
-    minPullbackPercent: 2,      // 최근 고점 대비 최소 하락률 (3→2%)
-    maxPullbackPercent: 15,     // 최근 고점 대비 최대 하락률 (10→15%)
-    
-    // 🔍 추가 필터
-    requireBollingerLower: true, // 볼린저 하단 근처 필수
-    bollingerThreshold: 0.3,     // 하단에서 밴드폭의 30% 이내
-    minVolume: 0.5,              // 평균 거래량의 최소 배수
+    enabled: true,
+    minScore: 65,                   // 🔥 68 → 65
+    rsiMin: 20,                     // 🔥 25 → 20 (더 과매도)
+    rsiMax: 45,                     // 🔥 55 → 45 (더 타이트)
+    requireUptrend: false,          // 🔥 true → false (역추세도 허용)
+    minPullbackPercent: 1.5,        // 🔥 2 → 1.5%
+    maxPullbackPercent: 8,          // 🔥 15 → 8% (스캘핑 범위)
+    requireBollingerLower: true,
+    bollingerThreshold: 0.35,       // 🔥 0.3 → 0.35
+    minVolume: 0.8,                 // 🔥 0.5 → 0.8 (거래량 중요)
   },
   
   // ============================================
-  // 🧠 고급 전략 설정 (v5.8.2 신규!)
+  // 🧠 고급 전략 설정 (스캘핑 최적화!)
   // ============================================
   
   ADVANCED_STRATEGY: {
-    // 🚀 변동성 돌파 전략 (래리 윌리엄스 방식)
+    // 🚀 변동성 돌파 (스캘핑 핵심!)
     volatilityBreakout: {
       enabled: true,
-      kValue: 0.5,              // K-value (0.4~0.6 권장)
+      kValue: 0.4,                  // 🔥 0.5 → 0.4 (더 민감)
     },
     
-    // 🐋 고래 감지
+    // 🐋 고래 감지 (스캘핑: 더 민감!)
     whaleDetection: {
       enabled: true,
-      minTradeAmount: 50000000, // 5천만원 이상 체결 시 고래로 판단
-      scoreBonus: 10,           // 고래 감지 시 추가 점수
+      minTradeAmount: 30000000,     // 🔥 5천만 → 3천만
+      scoreBonus: 12,               // 🔥 10 → 12점
     },
     
-    // 💰 동적 자금 배분 (점수 기반)
+    // 💰 동적 자금 배분
     dynamicSizing: {
       enabled: true,
-      minMultiplier: 0.3,       // 최소 30% (78점 기준)
-      maxMultiplier: 1.0,       // 최대 100% (90점 이상)
-      baseScore: 78,            // 기준 점수
-      maxScore: 90,             // 최대 점수
+      minMultiplier: 0.4,           // 🔥 0.3 → 0.4
+      maxMultiplier: 1.0,
+      baseScore: 68,
+      maxScore: 90,
     },
     
-    // 🌡️ Fear & Greed 연동
+    // 🌡️ Fear & Greed 연동 (공포장 강화!)
     fearGreedAdjust: {
       enabled: true,
-      extremeFear: 25,          // 극도의 공포 기준
-      extremeGreed: 75,         // 극도의 탐욕 기준
-      fearBonus: 5,             // 공포 시 추가 점수 (역발상)
-      greedPenalty: -10,        // 탐욕 시 점수 차감
+      extremeFear: 30,              // 🔥 25 → 30 (더 넓은 범위)
+      extremeGreed: 70,             // 🔥 75 → 70
+      fearBonus: 12,                // 🔥 10 → 12점!
+      greedPenalty: -8,             // 🔥 -10 → -8
     },
     
-    // 🇰🇷 김프 필터 강화
+    // 🇰🇷 김프 필터 (스캘핑: 좀 더 관대)
     kimchiPremiumFilter: {
       enabled: true,
-      maxPremium: 4.5,          // 4.5% 이상 시 매수 차단
-      warningPremium: 3.0,      // 3% 이상 시 경고
+      maxPremium: 5.0,              // 🔥 4.5 → 5%
+      warningPremium: 3.5,
     },
   },
 
   // ============================================
-  // 📊 모니터링할 코인 목록
+  // 📊 모니터링할 코인 (스캘핑: 유동성 중요!)
   // ============================================
   
   USE_ALL_COINS: true,
@@ -185,211 +169,192 @@ module.exports = {
   ],
 
   // ============================================
-  // ⏱ 분석 주기 설정
+  // ⏱ 분석 주기 (스캘핑: 더 자주!)
   // ============================================
   
-  ANALYSIS_INTERVAL: 5 * 60 * 1000,
+  ANALYSIS_INTERVAL: 3 * 60 * 1000, // 🔥 5분 → 3분
   CANDLE_COUNT: 100,
-  CANDLE_UNIT: 60,
+  CANDLE_UNIT: 15,                  // 🔥 60분 → 15분봉!
+  
+  API_DELAY: 800,                   // 🔥 API 간격 0.8초
 
   // ============================================
-  // 🎯 알림 기준 설정
+  // 🎯 알림 기준 (스캘핑용)
   // ============================================
   
-  ALERT_THRESHOLD: 75,
-  ALERT_COOLDOWN: 30 * 60 * 1000,
+  ALERT_THRESHOLD: 68,              // 🔥 72 → 68
+  ALERT_COOLDOWN: 10 * 60 * 1000,   // 🔥 30분 → 10분
 
   // ============================================
-  // 📊 멀티 스타일 트레이딩 설정
+  // 📊 스캘핑 전용! (다른 스타일 비활성화)
   // ============================================
   
-  MULTI_STYLE_ANALYSIS: true,  // 4가지 스타일 동시 분석
+  MULTI_STYLE_ANALYSIS: true,
   
   TRADING_STYLES: {
-    // 🔥 스캘핑 (몇 분 ~ 몇 시간)
+    // 🔥 스캘핑 (메인!)
     scalping: {
-      enabled: true,
+      enabled: true,                // ✅ 활성화!
       name: '🔥 스캘핑',
-      candle_unit: 15,        // 15분봉
+      candle_unit: 15,              // 15분봉
       candle_count: 100,
-      alert_threshold: 80,    // 높은 기준 (정확도)
+      alert_threshold: 68,          // 🔥 낮춤
       stop_loss_percent: 2,
       target_percent: 3,
       atr_multiplier: 1.5,
-      cooldown: 15 * 60 * 1000,  // 15분
-      analysis_interval: 5 * 60 * 1000,  // 5분마다 분석
+      cooldown: 10 * 60 * 1000,     // 10분
+      analysis_interval: 3 * 60 * 1000,  // 3분마다
     },
     
-    // ⚡ 단타 (몇 시간 ~ 1일)
+    // ⚡ 단타 (비활성화)
     daytrading: {
-      enabled: true,
+      enabled: false,               // ❌ 비활성화!
       name: '⚡ 단타',
-      candle_unit: 60,        // 1시간봉
+      candle_unit: 60,
       candle_count: 100,
-      alert_threshold: 78,
+      alert_threshold: 72,
       stop_loss_percent: 4,
       target_percent: 8,
       atr_multiplier: 2,
-      cooldown: 30 * 60 * 1000,  // 30분
-      analysis_interval: 15 * 60 * 1000,  // 15분마다 분석
+      cooldown: 30 * 60 * 1000,
+      analysis_interval: 15 * 60 * 1000,
     },
     
-    // 📈 스윙 (며칠 ~ 몇 주)
+    // 📈 스윙 (비활성화)
     swing: {
-      enabled: true,
+      enabled: false,               // ❌ 비활성화!
       name: '📈 스윙',
-      candle_unit: 240,       // 4시간봉
+      candle_unit: 240,
       candle_count: 100,
-      alert_threshold: 75,
+      alert_threshold: 70,
       stop_loss_percent: 7,
       target_percent: 15,
       atr_multiplier: 2.5,
-      cooldown: 2 * 60 * 60 * 1000,  // 2시간
-      analysis_interval: 60 * 60 * 1000,  // 1시간마다 분석
+      cooldown: 2 * 60 * 60 * 1000,
+      analysis_interval: 60 * 60 * 1000,
     },
     
-    // 🏦 장기 (몇 주 ~ 몇 달)
+    // 🏦 장기 (비활성화)
     longterm: {
-      enabled: true,
+      enabled: false,               // ❌ 비활성화!
       name: '🏦 장기',
-      candle_unit: 'day',     // 일봉
+      candle_unit: 'day',
       candle_count: 100,
-      alert_threshold: 75,
+      alert_threshold: 68,
       stop_loss_percent: 12,
       target_percent: 30,
       atr_multiplier: 3,
-      cooldown: 6 * 60 * 60 * 1000,  // 6시간
-      analysis_interval: 4 * 60 * 60 * 1000,  // 4시간마다 분석
+      cooldown: 6 * 60 * 60 * 1000,
+      analysis_interval: 4 * 60 * 60 * 1000,
     },
   },
 
   // ============================================
-  // 📰 뉴스 분석 설정
+  // 📰 뉴스 분석 (스캘핑: 간소화)
   // ============================================
   
-  USE_NEWS_ANALYSIS: true,
-  USE_COINNESS_NEWS: true,  // 코인니스 한국어 뉴스 분석
-  NEWS_WEIGHT_PERCENT: 10,
+  USE_NEWS_ANALYSIS: false,         // 🔥 비활성화 (속도 우선)
+  USE_COINNESS_NEWS: false,
+  NEWS_WEIGHT_PERCENT: 0,
   NEWS_CHECK_THRESHOLD: 60,
 
   // ============================================
-  // 🌐 글로벌 가격 연동 설정
+  // 🌐 글로벌 가격 연동
   // ============================================
   
-  // 바이낸스 API 직접 사용 (Render.com에서 차단될 수 있음)
   USE_BINANCE_ANALYSIS: false,
-  
-  // CoinGecko API 사용 (바이낸스 차단 시 대체)
-  // 글로벌 USD 가격 + 김치 프리미엄 계산용
-  USE_COINGECKO: true,
-  
-  // 김치 프리미엄 표시 여부
-  SHOW_KIMCHI_PREMIUM: true,
-  
-  // 펀딩비 분석 (바이낸스 선물 API 필요 - 현재 차단)
+  USE_COINGECKO: false,             // 🔥 비활성화 (속도 우선)
+  SHOW_KIMCHI_PREMIUM: false,
   USE_FUNDING_ANALYSIS: false,
-  
-  // 호가창 분석 (업비트 API 사용)
-  USE_ORDERBOOK_ANALYSIS: true,
-  
-  // 멀티타임프레임 사용 여부 (일봉 추세 확인)
-  USE_MULTI_TIMEFRAME: true,
+  USE_ORDERBOOK_ANALYSIS: true,     // ✅ 호가창은 중요!
+  USE_MULTI_TIMEFRAME: false,       // 🔥 비활성화 (스캘핑은 단기만)
 
   // ============================================
-  // 🛡️ 손절가 설정 (신규!)
+  // 🛡️ 손절가 설정 (스캘핑: 타이트!)
   // ============================================
   
-  // 손절가 계산 방식: 'percent' (고정 퍼센트) 또는 'atr' (ATR 기반)
   STOP_LOSS_TYPE: 'atr',
-  
-  // 고정 퍼센트 손절 (STOP_LOSS_TYPE: 'percent' 일 때)
-  STOP_LOSS_PERCENT: 3,
-  
-  // ATR 기반 손절 배수 (STOP_LOSS_TYPE: 'atr' 일 때)
-  // 손절가 = 진입가 - (ATR * 배수)
-  ATR_STOP_MULTIPLIER: 3.0,  // 휘두르기 손절 방지 (2.5 → 3.0)
-  
-  // ATR 계산 기간
+  STOP_LOSS_PERCENT: 2,             // 🔥 3% → 2%
+  ATR_STOP_MULTIPLIER: 1.5,         // 🔥 3.0 → 1.5
   ATR_PERIOD: 14,
 
   // ============================================
-  // 💰 거래대금 필터 (신규!)
+  // 💰 거래대금 필터 (스캘핑: 유동성 중요!)
   // ============================================
   
-  // 최소 거래대금 필터 (억원 단위)
   USE_VOLUME_FILTER: true,
-  MIN_TRADING_VALUE: 100,  // 24시간 거래대금 100억 이상만 분석
+  MIN_TRADING_VALUE: 150,           // 🔥 100억 → 150억 (유동성)
   
   // ============================================
-  // 🎯 동적 가중치 (신규!)
+  // 🎯 동적 가중치
   // ============================================
   
-  USE_DYNAMIC_WEIGHTS: true,  // ADX 기반 동적 가중치 활성화
+  USE_DYNAMIC_WEIGHTS: true,
   
   // ============================================
-  // 🔥 김치 프리미엄 과열 알림
+  // 🔥 김치 프리미엄 알림 (간소화)
   // ============================================
   
-  KIMCHI_PREMIUM_ALERT: true,
-  KIMCHI_PREMIUM_HIGH: 5,    // 5% 이상 = 과열 경고
-  KIMCHI_PREMIUM_LOW: -1,    // -1% 이하 = 역프 알림
+  KIMCHI_PREMIUM_ALERT: false,      // 🔥 비활성화
+  KIMCHI_PREMIUM_HIGH: 5,
+  KIMCHI_PREMIUM_LOW: -1,
 
   // ============================================
-  // 📬 정기 리포트 설정
+  // 📬 정기 리포트
   // ============================================
   
   SEND_PERIODIC_REPORT: true,
-  REPORT_INTERVAL: 12,
+  REPORT_INTERVAL: 6,               // 🔥 12 → 6시간마다
 
   // ============================================
-  // 📈 기술적 지표 가중치 (합계 ~100)
+  // 📈 기술적 지표 가중치 (스캘핑 최적화!)
   // ============================================
   
   INDICATOR_WEIGHTS: {
-    RSI: 8,
-    MFI: 10,
-    OBV: 8,
-    ADX: 8,
-    MACD: 12,
-    BOLLINGER: 10,
-    MA: 8,
-    STOCHASTIC: 8,
-    VOLUME: 8,
-    FUNDING: 10,
-    ORDERBOOK: 10,
+    RSI: 12,                        // 🔥 8 → 12 (중요!)
+    MFI: 8,
+    OBV: 6,
+    ADX: 10,                        // 🔥 8 → 10 (추세 중요)
+    MACD: 10,
+    BOLLINGER: 15,                  // 🔥 10 → 15 (스캘핑 핵심!)
+    MA: 6,
+    STOCHASTIC: 12,                 // 🔥 8 → 12 (과매수/과매도)
+    VOLUME: 12,                     // 🔥 8 → 12 (거래량 중요!)
+    FUNDING: 0,                     // 🔥 10 → 0 (비활성화)
+    ORDERBOOK: 9,
   },
 
   // ============================================
-  // 🔧 기술적 지표 파라미터
+  // 🔧 기술적 지표 파라미터 (스캘핑용!)
   // ============================================
   
   INDICATOR_PARAMS: {
-    RSI_PERIOD: 14,
-    RSI_OVERSOLD: 30,
-    RSI_OVERBOUGHT: 70,
+    RSI_PERIOD: 7,                  // 🔥 14 → 7 (더 민감)
+    RSI_OVERSOLD: 25,               // 🔥 30 → 25
+    RSI_OVERBOUGHT: 75,             // 🔥 70 → 75
     
-    MFI_PERIOD: 14,
-    MFI_OVERSOLD: 20,
-    MFI_OVERBOUGHT: 80,
+    MFI_PERIOD: 7,                  // 🔥 14 → 7
+    MFI_OVERSOLD: 15,               // 🔥 20 → 15
+    MFI_OVERBOUGHT: 85,             // 🔥 80 → 85
     
-    ADX_PERIOD: 14,
-    ADX_STRONG_TREND: 25,
+    ADX_PERIOD: 7,                  // 🔥 14 → 7
+    ADX_STRONG_TREND: 20,           // 🔥 25 → 20
     
-    MACD_FAST: 12,
-    MACD_SLOW: 26,
+    MACD_FAST: 8,                   // 🔥 12 → 8
+    MACD_SLOW: 17,                  // 🔥 26 → 17
     MACD_SIGNAL: 9,
     
-    BB_PERIOD: 20,
+    BB_PERIOD: 15,                  // 🔥 20 → 15
     BB_STD_DEV: 2,
     
-    MA_SHORT: 20,
-    MA_LONG: 50,
-    MA_TREND: 100,
+    MA_SHORT: 10,                   // 🔥 20 → 10
+    MA_LONG: 30,                    // 🔥 50 → 30
+    MA_TREND: 50,                   // 🔥 100 → 50
     
-    STOCH_PERIOD: 14,
-    STOCH_OVERSOLD: 20,
-    STOCH_OVERBOUGHT: 80,
+    STOCH_PERIOD: 7,                // 🔥 14 → 7
+    STOCH_OVERSOLD: 15,             // 🔥 20 → 15
+    STOCH_OVERBOUGHT: 85,           // 🔥 80 → 85
     
-    VOLUME_SURGE_RATIO: 2.0,
+    VOLUME_SURGE_RATIO: 1.8,        // 🔥 2.0 → 1.8 (더 민감)
   },
 };
