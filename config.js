@@ -48,7 +48,7 @@ module.exports = {
   
   AUTO_TRADE: {
     enabled: true,              // 자동매매 활성화
-    testMode: false,            // 🔴 실전 모드!
+    testMode: true,             // 🧪 테스트 모드!
     
     // 💰 자금 관리 (1단계 테스트: 2주)
     maxInvestPerTrade: 1500000, // 1회 최대 150만원
