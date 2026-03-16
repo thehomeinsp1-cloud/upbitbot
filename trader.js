@@ -589,11 +589,23 @@ const checkBuyConditions = async (market, analysis) => {
     return { allowed: false, reason: '자동매매 비활성화' };
   }
 
-  // 2. 점수 체크
-  const score = parseFloat(analysis.scorePercent);
-  if (score < tradeConfig.minScore) {
-    return { allowed: false, reason: `점수 부족 (${score} < ${tradeConfig.minScore})` };
+  // 🚫 v5.9.2: 블랙리스트 체크
+  if (config.BLACKLIST_COINS && config.BLACKLIST_COINS.includes(market)) {
+    console.log(`   🚫 ${coinName} 블랙리스트 코인 - 매수 차단`);
+    return { allowed: false, reason: `블랙리스트 코인` };
   }
+
+// 2. 점수 체크 (화이트리스트 보너스 적용)
+  let score = parseFloat(analysis.scorePercent);
+  
+  // ⭐ v5.9.2: 화이트리스트 보너스 (+5점)
+  if (config.WHITELIST_COINS && config.WHITELIST_COINS.includes(market)) {
+    const bonus = config.WHITELIST_BONUS || 5;
+    score += bonus;
+    console.log(`   ⭐ ${coinName} 화이트리스트 +${bonus}점 → ${score.toFixed(1)}점`);
+  }
+  
+  if (score < tradeConfig.minScore) {
 
   // 3. 최대 포지션 수 체크
   if (positions.size >= tradeConfig.maxPositions) {
